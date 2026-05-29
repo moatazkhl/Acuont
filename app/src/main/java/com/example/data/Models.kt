@@ -13,7 +13,8 @@ data class Invoice(
     val profit: Double,
     val status: String,        // "draft" (مسودة), "saved" (حفظ وطباعة)
     val notes: String,
-    val itemsJson: String      // Serialized JSON array of invoice items
+    val itemsJson: String,      // Serialized JSON array of invoice items
+    val currency: String = "ل.س"
 )
 
 @Entity(tableName = "accounts")
@@ -25,7 +26,8 @@ data class Account(
     val phone: String,
     val address: String,
     val notes: String,
-    val color: String          // Card color hex string
+    val color: String,          // Card color hex string
+    val currency: String = "ل.س"
 )
 
 @Entity(tableName = "products")

@@ -5,25 +5,23 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Invoice::class, Account::class, Product::class, Voucher::class], version = 1, exportSchema = false)
+@Database(entities = [Invoice::class, Account::class, Product::class, Voucher::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun appDao(): AppDao
 
     companion object {
-        @Volatile
-        private var INSTANCE: AppDatabase? = null
+        private val INSTANCES = java.util.concurrent.ConcurrentHashMap<String, AppDatabase>()
 
-        fun getDatabase(context: Context): AppDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
+        fun getDatabase(context: Context, dbName: String = "smart_accountant_db"): AppDatabase {
+            val actualDbName = if (dbName.endsWith(".db")) dbName else "$dbName.db"
+            return INSTANCES.getOrPut(actualDbName) {
+                Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "smart_accountant_db"
+                    actualDbName
                 )
                 .fallbackToDestructiveMigration()
                 .build()
-                INSTANCE = instance
-                instance
             }
         }
     }

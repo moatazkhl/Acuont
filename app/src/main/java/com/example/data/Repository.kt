@@ -12,7 +12,17 @@ class AppRepository(private val appDao: AppDao) {
     val products: Flow<List<Product>> = appDao.getAllProducts()
     val vouchers: Flow<List<Voucher>> = appDao.getAllVouchers()
 
-    suspend fun insertInvoice(invoice: Invoice) = withContext(Dispatchers.IO) {
+    suspend fun insertInvoiceRaw(invoice: Invoice) = withContext(Dispatchers.IO) {
+        appDao.insertInvoice(invoice)
+    }
+
+    suspend fun insertInvoice(
+        invoice: Invoice, 
+        usdRate: Double = 13700.0, 
+        eurRate: Double = 14900.0, 
+        sarRate: Double = 3650.0, 
+        tryRate: Double = 380.0
+    ) = withContext(Dispatchers.IO) {
         appDao.insertInvoice(invoice)
         // Also update the account balance reactively based on invoice type
         val accountsList = appDao.getAllAccounts().first()
@@ -21,10 +31,28 @@ class AppRepository(private val appDao: AppDao) {
             val balanceDiff = when (invoice.type) {
                 "sale" -> -invoice.total // Debit customer (they owe us more)
                 "purchase" -> invoice.total // Credit supplier (we owe them more)
-                "return" -> invoice.total // Refund/return
+                "return", "return_sale" -> invoice.total // Refund/return sale
+                "return_purchase" -> -invoice.total // Refund/return purchase
                 else -> 0.0
             }
-            appDao.updateAccountBalance(account.id, account.balance + balanceDiff)
+            val rateFrom = when (invoice.currency) {
+                "USD" -> usdRate
+                "EUR" -> eurRate
+                "SAR" -> sarRate
+                "TRY" -> tryRate
+                else -> 1.0
+            }
+            val diffInSyp = balanceDiff * rateFrom
+
+            val rateTo = when (account.currency) {
+                "USD" -> usdRate
+                "EUR" -> eurRate
+                "SAR" -> sarRate
+                "TRY" -> tryRate
+                else -> 1.0
+            }
+            val convertedDiff = if (rateTo != 0.0) diffInSyp / rateTo else diffInSyp
+            appDao.updateAccountBalance(account.id, account.balance + convertedDiff)
         }
     }
 
@@ -40,12 +68,20 @@ class AppRepository(private val appDao: AppDao) {
         appDao.insertAccount(account)
     }
 
+    suspend fun deleteAccount(account: Account) = withContext(Dispatchers.IO) {
+        appDao.deleteAccount(account)
+    }
+
     suspend fun updateAccountBalance(id: String, newBalance: Double) = withContext(Dispatchers.IO) {
         appDao.updateAccountBalance(id, newBalance)
     }
 
     suspend fun insertProduct(product: Product) = withContext(Dispatchers.IO) {
         appDao.insertProduct(product)
+    }
+
+    suspend fun deleteProduct(product: Product) = withContext(Dispatchers.IO) {
+        appDao.deleteProduct(product)
     }
 
     suspend fun updateProductQuantity(id: String, newQty: Int) = withContext(Dispatchers.IO) {

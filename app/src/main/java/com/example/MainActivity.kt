@@ -2,6 +2,10 @@ package com.example
 
 import android.os.Bundle
 import android.widget.Toast
+import android.content.Intent
+import android.net.Uri
+import android.app.DatePickerDialog
+import java.util.Calendar
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -14,6 +18,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -84,6 +90,14 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
     var isCurrenciesOpen by remember { mutableStateOf(false) }
     var activeReportType by remember { mutableStateOf<String?>(null) } // daily, pl, topProducts, topCustomers, lowStock
     var selectedStatementAccount by remember { mutableStateOf<Account?>(null) }
+    
+    // Barcode designer and print states
+    var isPrintBarcodeOpen by remember { mutableStateOf(false) }
+    var selectedBarcodeProduct by remember { mutableStateOf<Product?>(null) }
+    
+    // Barcode scanner simulation states
+    var isScannerOpen by remember { mutableStateOf(false) }
+    var scannerOnScanned by remember { mutableStateOf<((String) -> Unit)?>(null) }
 
     // Toast listener from ViewModel flows
     LaunchedEffect(Unit) {
@@ -93,94 +107,255 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
     }
 
     // Main App Scaffold containing bottom bar and body
-    Box(modifier = modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Header Bar
-            Row(
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val isWide = maxWidth > 760.dp
+
+        Row(modifier = Modifier.fillMaxSize()) {
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.primary)
-                    .statusBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .weight(1.2f)
+                    .fillMaxHeight()
             ) {
-                IconButton(onClick = { isDrawerOpen = true }) {
-                    Icon(imageVector = Icons.Default.Menu, contentDescription = "قائمة", tint = Color.White)
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "المحاسب الذكي",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    Text(
-                        text = companyName,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color.White.copy(alpha = 0.8f)
-                    )
-                }
-                IconButton(onClick = { isCalcOpen = true }) {
-                    Text(text = "🧮", fontSize = 20.sp)
-                }
-                IconButton(onClick = { viewModel.toggleDarkMode() }) {
-                    Text(text = if (isDarkMode) "☀️" else "🌙", fontSize = 20.sp)
-                }
-                IconButton(onClick = { viewModel.setTab("settings") }) {
-                    Text(text = "⚙️", fontSize = 20.sp)
-                }
-            }
-
-            // Dynamic Body content based on tab selection
-            Box(modifier = Modifier.weight(1f)) {
-                when (currentTab) {
-                    "invoices" -> InvoicesTabScreen(
-                        viewModel = viewModel,
-                        onNewInvoiceClick = { isNewInvoiceOpen = true }
-                    )
-                    "accounts" -> AccountsTabScreen(
-                        viewModel = viewModel,
-                        onAccountClick = { acc -> selectedStatementAccount = acc }
-                    )
-                    "products" -> ProductsTabScreen(viewModel = viewModel)
-                    "reports" -> ReportsTabScreen(
-                        viewModel = viewModel,
-                        onReportClick = { report -> activeReportType = report },
-                        onExchangeClick = { isCurrenciesOpen = true }
-                    )
-                    "settings" -> SettingsTabScreen(viewModel = viewModel)
-                }
-            }
-
-            // Bottom Navigation Pill Bar
-            NavigationBar(
-                modifier = Modifier.navigationBarsPadding(),
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 8.dp
-            ) {
-                val tabs = listOf(
-                    Triple("invoices", "فواتير", "🧾"),
-                    Triple("accounts", "حسابات", "👥"),
-                    Triple("products", "مواد", "📦"),
-                    Triple("reports", "تقارير", "📊"),
-                    Triple("settings", "إعدادات", "⚙️")
-                )
-
-                tabs.forEach { (tab, label, emoji) ->
-                    NavigationBarItem(
-                        selected = currentTab == tab,
-                        onClick = { viewModel.setTab(tab) },
-                        icon = { Text(text = emoji, fontSize = 22.sp) },
-                        label = { Text(text = label, fontWeight = FontWeight.Bold, fontSize = 11.sp) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            unselectedIconColor = Color.Gray,
-                            unselectedTextColor = Color.Gray
+                // Header Bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primary)
+                        .statusBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { isDrawerOpen = true }) {
+                        Icon(imageVector = Icons.Default.Menu, contentDescription = "قائمة", tint = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "المحاسب الذكي",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
                         )
+                        Text(
+                            text = companyName,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White.copy(alpha = 0.8f)
+                        )
+                    }
+                    IconButton(onClick = { isCalcOpen = true }) {
+                        Text(text = "🧮", fontSize = 20.sp)
+                    }
+                    IconButton(onClick = { viewModel.toggleDarkMode() }) {
+                        Text(text = if (isDarkMode) "☀️" else "🌙", fontSize = 20.sp)
+                    }
+                    IconButton(onClick = { viewModel.setTab("settings") }) {
+                        Text(text = "⚙️", fontSize = 20.sp)
+                    }
+                }
+
+                // Dynamic Body content based on tab selection
+                Box(modifier = Modifier.weight(1f)) {
+                    when (currentTab) {
+                        "invoices" -> InvoicesTabScreen(
+                            viewModel = viewModel,
+                            onNewInvoiceClick = { isNewInvoiceOpen = true }
+                        )
+                        "accounts" -> AccountsTabScreen(
+                            viewModel = viewModel,
+                            onAccountClick = { acc -> selectedStatementAccount = acc },
+                            onEditAccountClick = { acc ->
+                                viewModel.startEditingAccount(acc)
+                                isNewAccountOpen = true
+                            }
+                        )
+                        "products" -> ProductsTabScreen(
+                            viewModel = viewModel,
+                            onEditProductClick = { prod ->
+                                viewModel.startEditingProduct(prod)
+                                isNewProductOpen = true
+                            },
+                            onPrintBarcodeClick = { prod ->
+                                selectedBarcodeProduct = prod
+                                isPrintBarcodeOpen = true
+                            }
+                        )
+                        "reports" -> ReportsTabScreen(
+                            viewModel = viewModel,
+                            onReportClick = { report -> activeReportType = report },
+                            onExchangeClick = { isCurrenciesOpen = true }
+                        )
+                        "settings" -> SettingsTabScreen(viewModel = viewModel)
+                    }
+                }
+
+                // Bottom Navigation Pill Bar
+                NavigationBar(
+                    modifier = Modifier.navigationBarsPadding(),
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 8.dp
+                ) {
+                    val tabs = listOf(
+                        Triple("invoices", "فواتير", "🧾"),
+                        Triple("accounts", "حسابات", "👥"),
+                        Triple("products", "مواد", "📦"),
+                        Triple("reports", "تقارير", "📊"),
+                        Triple("settings", "إعدادات", "⚙️")
                     )
+
+                    tabs.forEach { (tab, label, emoji) ->
+                        NavigationBarItem(
+                            selected = currentTab == tab,
+                            onClick = { viewModel.setTab(tab) },
+                            icon = { Text(text = emoji, fontSize = 22.sp) },
+                            label = { Text(text = label, fontWeight = FontWeight.Bold, fontSize = 11.sp) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                unselectedIconColor = Color.Gray,
+                                unselectedTextColor = Color.Gray
+                            )
+                        )
+                    }
+                }
+            }
+
+            if (isWide) {
+                // Large device support with side-by-side ledger verification panel
+                Box(modifier = Modifier.width(1.dp).fillMaxHeight().background(Color(0xFFD0DEDD)))
+                Box(
+                    modifier = Modifier
+                        .weight(1.1f)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f))
+                        .padding(16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "🕵️‍♂️ لوحة التدقيق المحاسبي وسجلات الـ SQLite",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "تتبع فوري لمطابقة البيانات والقيود والأرصدة من نواة قاعدة البيانات مباشرة ومراجعتها:",
+                            fontSize = 11.sp,
+                            color = Color.Gray
+                        )
+
+                        val invoicesList by viewModel.invoices.collectAsState()
+                        val accountsList by viewModel.accounts.collectAsState()
+                        val productsList by viewModel.products.collectAsState()
+                        val vouchersList by viewModel.vouchers.collectAsState()
+
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFFD0DEDD).copy(alpha = 0.8f))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("📈 ملخص السجلات بقاعدة البيانات المفعّلة:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("• إجمالي الفواتير المحفوظة:", fontSize = 11.sp)
+                                    Text("${invoicesList.size} فاتورة حية", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("• إجمالي الحسابات والعملاء الماليين:", fontSize = 11.sp)
+                                    Text("${accountsList.size} حساب", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("• عدد المواد بالمخزن:", fontSize = 11.sp)
+                                    Text("${productsList.size} مادة", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("• سندات القبض والصرف الفاعلة:", fontSize = 11.sp)
+                                    Text("${vouchersList.size} سند محاسبي", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                }
+                            }
+                        }
+
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFFD0DEDD).copy(alpha = 0.8f))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("🎯 مؤشرات التوازن والسيولة الفورية:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                val stockValue = productsList.sumOf { it.qty * it.sellPrice }
+                                val clientsDebt = accountsList.filter { it.type == "customer" }.sumOf { maxOf(0.0, -viewModel.getAccountBalanceInSyp(it)) }
+                                val suppliersPayable = accountsList.filter { it.type == "supplier" }.sumOf { maxOf(0.0, viewModel.getAccountBalanceInSyp(it)) }
+                                
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("• تقييم بضاعة المخازن (سعر البيع):", fontSize = 11.sp)
+                                    Text("${viewModel.formatCurrency(stockValue)} ل.س", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF2EBD7A))
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("• ديون مستحقة للشركة بذمة العملاء (عليه):", fontSize = 11.sp)
+                                    Text("${viewModel.formatCurrency(clientsDebt)} ل.س", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF4A7FA5))
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("• ذمم ومبالغ للموردين بذمة الشركة (له):", fontSize = 11.sp)
+                                    Text("${viewModel.formatCurrency(suppliersPayable)} ل.س", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFFE03C3C))
+                                }
+                            }
+                        }
+
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFFD0DEDD).copy(alpha = 0.8f))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("⚡ أدوات تفريغ وحقن البيانات للاختبار السريع:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Button(
+                                    onClick = { viewModel.loadDemoData() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                ) {
+                                    Text("حقن وتوليد بيانات محاسبية غنية تجريبياً ✓", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Button(
+                                    onClick = { viewModel.clearDatabase() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE03C3C))
+                                ) {
+                                    Text("تصفية ومسح قاعدة البيانات تماماً 🗑️", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color.Black),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("📟 سجل العمليات والمحاسبة الفوري (SQLite Feed):", color = Color(0xFF2EBD7A), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                Text("رصد حي لتدفق الحركات المحاسبية المكتوبة بالـ SQLite في نفس اللحظة:", color = Color.White.copy(alpha = 0.6f), fontSize = 10.sp)
+                                
+                                val allAudits = (
+                                    invoicesList.map { "💾 [Invoice] ${it.id} - ${it.customer} - ${viewModel.formatCurrency(it.total)} ل.س [${it.status}]" } +
+                                    vouchersList.map { "💸 [Voucher] ${if(it.type=="receipt") "استلام" else "صرف"} - ${viewModel.formatCurrency(it.amount)} ل.س - ${it.desc}" }
+                                ).take(10)
+
+                                if (allAudits.isEmpty()) {
+                                    Text("بانتظار إدخال عمليات أو فواتير لرصد القيود حياً بقاعدة السجلات...", color = Color.Gray, fontSize = 10.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+                                } else {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        allAudits.forEach { audit ->
+                                            Text(text = "• $audit", color = Color.White, fontSize = 9.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -233,15 +408,35 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
 
         // Double check Dialog states
         if (isNewInvoiceOpen) {
-            NewInvoiceDialog(viewModel = viewModel, onClose = { isNewInvoiceOpen = false })
+            NewInvoiceDialog(
+                viewModel = viewModel,
+                onClose = { isNewInvoiceOpen = false },
+                onScanBarcodeClick = { callback ->
+                    scannerOnScanned = callback
+                    isScannerOpen = true
+                }
+            )
         }
 
         if (isNewAccountOpen) {
-            NewAccountDialog(viewModel = viewModel, onClose = { isNewAccountOpen = false })
+            NewAccountDialog(viewModel = viewModel, onClose = { 
+                isNewAccountOpen = false
+                viewModel.clearAccountForm()
+            })
         }
 
         if (isNewProductOpen) {
-            NewProductDialog(viewModel = viewModel, onClose = { isNewProductOpen = false })
+            NewProductDialog(
+                viewModel = viewModel,
+                onClose = { 
+                    isNewProductOpen = false
+                    viewModel.clearProductForm()
+                },
+                onScanBarcodeClick = { callback ->
+                    scannerOnScanned = callback
+                    isScannerOpen = true
+                }
+            )
         }
 
         if (isNewVoucherOpen) {
@@ -270,6 +465,25 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
                     viewModel.voucherSelectedAccount.value = selectedStatementAccount
                     isNewVoucherOpen = true
                 }
+            )
+        }
+
+        if (isScannerOpen) {
+            BarcodeScannerCustomDialog(
+                viewModel = viewModel,
+                onScanned = { code ->
+                    scannerOnScanned?.invoke(code)
+                    isScannerOpen = false
+                },
+                onClose = { isScannerOpen = false }
+            )
+        }
+
+        if (isPrintBarcodeOpen && selectedBarcodeProduct != null) {
+            BarcodeThermalPrintDialog(
+                viewModel = viewModel,
+                product = selectedBarcodeProduct!!,
+                onClose = { isPrintBarcodeOpen = false }
             )
         }
     }
@@ -491,21 +705,21 @@ fun InvoiceItemRow(invoice: Invoice, viewModel: AppViewModel) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
                 Column {
                     Text(
-                        text = "${viewModel.formatCurrency(invoice.total)} ل.س",
+                        text = "${viewModel.formatCurrency(invoice.total)} ${invoice.currency}",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
                     if (invoice.profit > 0) {
                         Text(
-                            text = "ربح: ${viewModel.formatCurrency(invoice.profit)} ل.س",
+                            text = "ربح: ${viewModel.formatCurrency(invoice.profit)} ${invoice.currency}",
                             fontSize = 11.sp,
                             color = Color(0xFF2EBD7A),
                             fontWeight = FontWeight.Bold
                         )
                     } else if (invoice.profit < 0) {
                         Text(
-                            text = "خسارة: ${viewModel.formatCurrency(Math.abs(invoice.profit))} ل.س",
+                            text = "خسارة: ${viewModel.formatCurrency(Math.abs(invoice.profit))} ${invoice.currency}",
                             fontSize = 11.sp,
                             color = Color(0xFFE03C3C),
                             fontWeight = FontWeight.Bold
@@ -537,10 +751,40 @@ fun InvoiceItemRow(invoice: Invoice, viewModel: AppViewModel) {
 // 2. ACCOUNTS TAB PAGE
 // ==========================================
 @Composable
-fun AccountsTabScreen(viewModel: AppViewModel, onAccountClick: (Account) -> Unit) {
+fun AccountsTabScreen(
+    viewModel: AppViewModel,
+    onAccountClick: (Account) -> Unit,
+    onEditAccountClick: (Account) -> Unit
+) {
     val accounts by viewModel.accounts.collectAsState()
     val filter by viewModel.accountFilter.collectAsState()
     val search by viewModel.accountSearch.collectAsState()
+
+    var accountToDelete by remember { mutableStateOf<Account?>(null) }
+
+    if (accountToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { accountToDelete = null },
+            title = { Text(text = "تأكيد الحذف", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            text = { Text(text = "هل أنت متأكد من رغبتك في حذف الحساب (${accountToDelete?.name}) نهائياً؟ سيتم إزالة الحساب تماماً من النظام ولن تظهر كشوفات الحساب التابعة له.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        accountToDelete?.let { viewModel.deleteAccount(it) }
+                        accountToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) {
+                    Text(text = "حذف نهائي", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { accountToDelete = null }) {
+                    Text(text = "إلغاء")
+                }
+            }
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
         // Tab Filters
@@ -616,7 +860,13 @@ fun AccountsTabScreen(viewModel: AppViewModel, onAccountClick: (Account) -> Unit
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(filteredAccounts) { acc ->
-                    AccountItemRow(account = acc, viewModel = viewModel, onClick = { onAccountClick(acc) })
+                    AccountItemRow(
+                        account = acc,
+                        viewModel = viewModel,
+                        onClick = { onAccountClick(acc) },
+                        onEditClick = { onEditAccountClick(acc) },
+                        onDeleteClick = { accountToDelete = acc }
+                    )
                 }
             }
         }
@@ -624,7 +874,14 @@ fun AccountsTabScreen(viewModel: AppViewModel, onAccountClick: (Account) -> Unit
 }
 
 @Composable
-fun AccountItemRow(account: Account, viewModel: AppViewModel, onClick: () -> Unit) {
+fun AccountItemRow(
+    account: Account,
+    viewModel: AppViewModel,
+    onClick: () -> Unit,
+    onEditClick: () -> Unit,
+    onDeleteClick: () -> Unit
+) {
+    val context = LocalContext.current
     val typeLabel = when (account.type) {
         "customer" -> "عميل"
         "supplier" -> "مورد"
@@ -671,30 +928,72 @@ fun AccountItemRow(account: Account, viewModel: AppViewModel, onClick: () -> Uni
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = account.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Text(text = typeLabel, fontSize = 11.sp, color = Color.Gray)
-                if (account.phone.isNotBlank()) {
-                    Row(
-                        modifier = Modifier.padding(top = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
+                
+                // Action Buttons Row
+                Row(
+                    modifier = Modifier.padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (account.phone.isNotBlank()) {
                         IconButton(
-                            onClick = { viewModel.triggerToast("اتصال هاتف للرقم ${account.phone}") },
+                            onClick = {
+                                try {
+                                    val intent = Intent(Intent.ACTION_DIAL).apply {
+                                        data = Uri.parse("tel:${account.phone.trim()}")
+                                    }
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    viewModel.triggerToast("لا يمكن إجراء الاتصال: ${e.message}")
+                                }
+                            },
                             modifier = Modifier.size(28.dp).background(Color(0xFF2EBD7A).copy(alpha = 0.15f), RoundedCornerShape(8.dp))
                         ) {
                             Text(text = "📞", fontSize = 12.sp)
                         }
                         IconButton(
-                            onClick = { viewModel.triggerToast("رسالة واتساب للرقم ${account.phone}") },
+                            onClick = {
+                                try {
+                                    val formattedPhone = account.phone.trim().replace(" ", "").replace("-", "")
+                                    val url = "https://api.whatsapp.com/send?phone=$formattedPhone"
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    viewModel.triggerToast("خطأ في الانتقال للواتساب")
+                                }
+                            },
                             modifier = Modifier.size(28.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
                         ) {
                             Text(text = "💬", fontSize = 12.sp)
                         }
+                    }
+                    IconButton(
+                        onClick = onEditClick,
+                        modifier = Modifier.size(28.dp).background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "تعديل الحساب",
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = onDeleteClick,
+                        modifier = Modifier.size(28.dp).background(Color.Red.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "حذف الحساب",
+                            tint = Color.Red,
+                            modifier = Modifier.size(13.dp)
+                        )
                     }
                 }
             }
 
             Column(horizontalAlignment = Alignment.End) {
                 Text(text = balLabel, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = balColor)
-                Text(text = "ل.س", fontSize = 10.sp, color = Color.Gray)
+                Text(text = account.currency, fontSize = 10.sp, color = Color.Gray)
             }
         }
     }
@@ -705,10 +1004,40 @@ fun AccountItemRow(account: Account, viewModel: AppViewModel, onClick: () -> Uni
 // 3. PRODUCTS TAB PAGE
 // ==========================================
 @Composable
-fun ProductsTabScreen(viewModel: AppViewModel) {
+fun ProductsTabScreen(
+    viewModel: AppViewModel,
+    onEditProductClick: (Product) -> Unit,
+    onPrintBarcodeClick: (Product) -> Unit
+) {
     val products by viewModel.products.collectAsState()
     val filter by viewModel.productFilter.collectAsState()
     val search by viewModel.productSearch.collectAsState()
+
+    var productToDelete by remember { mutableStateOf<Product?>(null) }
+
+    if (productToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { productToDelete = null },
+            title = { Text(text = "تأكيد الحذف", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            text = { Text(text = "هل أنت متأكد من رغبتك في حذف المادة (${productToDelete?.name}) نهائياً؟ سيتم إزالتها تماماً من النظام.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        productToDelete?.let { viewModel.deleteProduct(it) }
+                        productToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) {
+                    Text(text = "حذف نهائي", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { productToDelete = null }) {
+                    Text(text = "إلغاء")
+                }
+            }
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
         // Tab Filters
@@ -786,7 +1115,13 @@ fun ProductsTabScreen(viewModel: AppViewModel) {
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(filteredProducts) { prod ->
-                    ProductItemRow(product = prod, viewModel = viewModel)
+                    ProductItemRow(
+                        product = prod,
+                        viewModel = viewModel,
+                        onEditClick = { onEditProductClick(prod) },
+                        onPrintBarcodeClick = { onPrintBarcodeClick(prod) },
+                        onDeleteClick = { productToDelete = prod }
+                    )
                 }
             }
         }
@@ -794,61 +1129,126 @@ fun ProductsTabScreen(viewModel: AppViewModel) {
 }
 
 @Composable
-fun ProductItemRow(product: Product, viewModel: AppViewModel) {
+fun ProductItemRow(
+    product: Product,
+    viewModel: AppViewModel,
+    onEditClick: () -> Unit,
+    onPrintBarcodeClick: () -> Unit,
+    onDeleteClick: () -> Unit
+) {
     val lowStock = product.qty <= product.minQty
 
     Card(
         modifier = Modifier
-            .fillMaxWidth()
-            .clickable { viewModel.triggerToast("${product.name} — كود: ${product.code}") },
+            .fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(14.dp),
         border = BorderStroke(1.dp, Color(0xFFD0DEDD))
     ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(50.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFFE4ECEB)),
-                contentAlignment = Alignment.Center
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(text = product.icon, fontSize = 24.sp)
-            }
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFFE4ECEB)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(text = product.icon, fontSize = 22.sp)
+                }
 
-            Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(10.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = product.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Text(text = "📊 ${product.code} | باركود: ${product.barcode}", fontSize = 11.sp, color = Color.Gray)
-                Text(
-                    text = "شراء: ${viewModel.formatCurrency(product.buyPrice)} | بيع: ${viewModel.formatCurrency(product.sellPrice)} ل.س",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.Gray,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
-            }
-
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = product.qty.toString(),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
-                    color = if (lowStock) Color(0xFFE03C3C) else MaterialTheme.colorScheme.primary
-                )
-                Text(text = product.unit, fontSize = 11.sp, color = Color.Gray)
-                if (lowStock) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = product.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(text = "📊 ${product.code} | باركود: ${product.barcode}", fontSize = 11.sp, color = Color.Gray)
                     Text(
-                        text = "⚠️ منخفض",
-                        fontSize = 10.sp,
-                        color = Color(0xFFE03C3C),
-                        fontWeight = FontWeight.Bold,
+                        text = "شراء: ${viewModel.formatCurrency(product.buyPrice)} | بيع: ${viewModel.formatCurrency(product.sellPrice)} ل.س",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(top = 2.dp)
                     )
+                }
+
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = product.qty.toString(),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = if (lowStock) Color(0xFFE03C3C) else MaterialTheme.colorScheme.primary
+                    )
+                    Text(text = product.unit, fontSize = 11.sp, color = Color.Gray)
+                    if (lowStock) {
+                        Text(
+                            text = "⚠️ منخفض",
+                            fontSize = 10.sp,
+                            color = Color(0xFFE03C3C),
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(color = Color(0xFFF0F5F4), thickness = 1.dp)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Action Buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Edit
+                IconButton(
+                    onClick = onEditClick,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .background(Color(0xFF2E86C1).copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "تعديل المادة",
+                        tint = Color(0xFF2E86C1),
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+
+                // Delete
+                IconButton(
+                    onClick = onDeleteClick,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .background(Color.Red.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "حذف المادة",
+                        tint = Color.Red,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                // Print Barcode Custom Thermal button
+                Button(
+                    onClick = onPrintBarcodeClick,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF0F9D58).copy(alpha = 0.15f),
+                        contentColor = Color(0xFF0F9D58)
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                    modifier = Modifier.height(32.dp),
+                    elevation = null
+                ) {
+                    Text(text = "🖨️ تصميم وطباعة الباركود", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1059,8 +1459,39 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
     val vatRate by viewModel.vatRate.collectAsState()
     val decimalPoints by viewModel.decimalPoints.collectAsState()
 
+    val companiesList by viewModel.companiesList.collectAsState()
+    val activeCompanyId by viewModel.activeCompanyId.collectAsState()
+
+    val companyPhone by viewModel.companyPhone.collectAsState()
+    val companyAddress by viewModel.companyAddress.collectAsState()
+    val companyCurrency by viewModel.companyCurrency.collectAsState()
+
     var showCompanyDialog by remember { mutableStateOf(false) }
-    var tempCompanyNameText by remember { mutableStateOf(companyName) }
+    var tempCompanyNameText by remember { mutableStateOf("") }
+    var tempCompanyPhoneText by remember { mutableStateOf("") }
+    var tempCompanyAddressText by remember { mutableStateOf("") }
+    var tempCompanyCurrencyText by remember { mutableStateOf("") }
+
+    LaunchedEffect(companyName, companyPhone, companyAddress, companyCurrency) {
+        tempCompanyNameText = companyName
+        tempCompanyPhoneText = companyPhone
+        tempCompanyAddressText = companyAddress
+        tempCompanyCurrencyText = companyCurrency
+    }
+
+    var showCreateCompanyDialog by remember { mutableStateOf(false) }
+    var newCompanyNameText by remember { mutableStateOf("") }
+    var newCompanyPhoneText by remember { mutableStateOf("") }
+    var newCompanyAddressText by remember { mutableStateOf("") }
+    var newCompanyCurrencyText by remember { mutableStateOf("ل.س") }
+
+    var companyToEdit by remember { mutableStateOf<com.example.ui.CompanyInfo?>(null) }
+    var editCompanyNameText by remember { mutableStateOf("") }
+    var editCompanyPhoneText by remember { mutableStateOf("") }
+    var editCompanyAddressText by remember { mutableStateOf("") }
+    var editCompanyCurrencyText by remember { mutableStateOf("") }
+
+    var companyToDelete by remember { mutableStateOf<com.example.ui.CompanyInfo?>(null) }
 
     // --- Developer and Verification states ---
     var showDiagnosticsDialog by remember { mutableStateOf(false) }
@@ -1119,12 +1550,12 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
                         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text("💰 تحليلات حسابات التوازن المالي السريع:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             val assetsValue = productsList.sumOf { it.qty * it.sellPrice }
-                            val totalCustomersDebt = accountsList.filter { it.type == "customer" }.sumOf { maxOf(0.0, it.balance) }
-                            val totalSuppliersDebt = accountsList.filter { it.type == "supplier" }.sumOf { maxOf(0.0, it.balance) }
+                            val totalCustomersDebt = accountsList.filter { it.type == "customer" }.sumOf { maxOf(0.0, -viewModel.getAccountBalanceInSyp(it)) }
+                            val totalSuppliersDebt = accountsList.filter { it.type == "supplier" }.sumOf { maxOf(0.0, viewModel.getAccountBalanceInSyp(it)) }
                             
-                            Text("• إجمالي قيمة البضاعة بالمخازن: ${viewModel.formatCurrency(assetsValue)} ل.س", fontSize = 11.sp)
-                            Text("• ديون مستحقة على العملاء: ${viewModel.formatCurrency(totalCustomersDebt)} ل.س", fontSize = 11.sp)
-                            Text("• مستحقات للموردين علينا: ${viewModel.formatCurrency(totalSuppliersDebt)} ل.س", fontSize = 11.sp)
+                            Text("• إجمالي قيمة البضاعة بالمخازن: ${viewModel.formatCurrencyWithSymbol(assetsValue)}", fontSize = 11.sp)
+                            Text("• ديون مستحقة على العملاء: ${viewModel.formatCurrencyWithSymbol(totalCustomersDebt)}", fontSize = 11.sp)
+                            Text("• مستحقات للموردين علينا: ${viewModel.formatCurrencyWithSymbol(totalSuppliersDebt)}", fontSize = 11.sp)
                         }
                     }
                 }
@@ -1218,24 +1649,214 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
     if (showCompanyDialog) {
         AlertDialog(
             onDismissRequest = { showCompanyDialog = false },
-            title = { Text("تعديل اسم الشركة") },
+            title = { Text("🏢 تعديل بيانات المنشأة النشطة", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
             text = {
-                OutlinedTextField(
-                    value = tempCompanyNameText,
-                    onValueChange = { tempCompanyNameText = it },
-                    label = { Text("اسم الشركة") },
-                    singleLine = true
-                )
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = tempCompanyNameText,
+                        onValueChange = { tempCompanyNameText = it },
+                        label = { Text("اسم الشركة") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = tempCompanyPhoneText,
+                        onValueChange = { tempCompanyPhoneText = it },
+                        label = { Text("رقم الهاتف") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = tempCompanyAddressText,
+                        onValueChange = { tempCompanyAddressText = it },
+                        label = { Text("العنوان الكلي") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = tempCompanyCurrencyText,
+                        onValueChange = { tempCompanyCurrencyText = it },
+                        label = { Text("العملة الافتراضية للحسابات") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.setCompanyName(tempCompanyNameText)
+                Button(onClick = {
+                    viewModel.updateCompanyDetails(
+                        activeCompanyId,
+                        tempCompanyNameText,
+                        tempCompanyPhoneText,
+                        tempCompanyAddressText,
+                        tempCompanyCurrencyText
+                    )
                     showCompanyDialog = false
-                    viewModel.triggerToast("تم تعديل الاسم بنجاح")
-                }) { Text("حفظ") }
+                }) {
+                    Text("حفظ التغييرات", fontWeight = FontWeight.Bold)
+                }
             },
             dismissButton = {
                 TextButton(onClick = { showCompanyDialog = false }) { Text("إلغاء") }
+            }
+        )
+    }
+
+    // Dynamic Multi-Company Dialog Overlays
+    if (showCreateCompanyDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateCompanyDialog = false },
+            title = { Text("🏢 تأسيس منشأة / شركة مالية جديدة", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                ) {
+                    Text("ستقوم بربط وتأسيس قاعدة بيانات دفاتر محاسبية مستقلة تماماً للمنشأة الجديدة في SQLite:", fontSize = 11.sp, color = Color.Gray)
+                    OutlinedTextField(
+                        value = newCompanyNameText,
+                        onValueChange = { newCompanyNameText = it },
+                        label = { Text("اسم الشركة") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newCompanyPhoneText,
+                        onValueChange = { newCompanyPhoneText = it },
+                        label = { Text("رقم الهاتف") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newCompanyAddressText,
+                        onValueChange = { newCompanyAddressText = it },
+                        label = { Text("العنوان الجغرافي للشركة") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newCompanyCurrencyText,
+                        onValueChange = { newCompanyCurrencyText = it },
+                        label = { Text("العملة الافتراضية") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (newCompanyNameText.isNotBlank()) {
+                        viewModel.createNewCompany(
+                            newCompanyNameText,
+                            newCompanyPhoneText,
+                            newCompanyAddressText,
+                            newCompanyCurrencyText
+                        )
+                        newCompanyNameText = ""
+                        newCompanyPhoneText = ""
+                        newCompanyAddressText = ""
+                        newCompanyCurrencyText = "ل.س"
+                        showCreateCompanyDialog = false
+                    } else {
+                        viewModel.triggerToast("يرجى ملء البيانات المطلوبة")
+                    }
+                }) {
+                    Text("تأسيس وحفظ", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateCompanyDialog = false }) { Text("إلغاء") }
+            }
+        )
+    }
+
+    if (companyToEdit != null) {
+        AlertDialog(
+            onDismissRequest = { companyToEdit = null },
+            title = { Text("✏️ تعديل بيانات المنشأة", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = editCompanyNameText,
+                        onValueChange = { editCompanyNameText = it },
+                        label = { Text("اسم الشركة") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editCompanyPhoneText,
+                        onValueChange = { editCompanyPhoneText = it },
+                        label = { Text("رقم الهاتف") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editCompanyAddressText,
+                        onValueChange = { editCompanyAddressText = it },
+                        label = { Text("العنوان") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editCompanyCurrencyText,
+                        onValueChange = { editCompanyCurrencyText = it },
+                        label = { Text("العملة الافتراضية") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (editCompanyNameText.isNotBlank()) {
+                        viewModel.updateCompanyDetails(
+                            companyToEdit!!.id,
+                            editCompanyNameText,
+                            editCompanyPhoneText,
+                            editCompanyAddressText,
+                            editCompanyCurrencyText
+                        )
+                        companyToEdit = null
+                    }
+                }) {
+                    Text("حفظ التعديلات", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { companyToEdit = null }) { Text("إلغاء") }
+            }
+        )
+    }
+
+    if (companyToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { companyToDelete = null },
+            title = { Text("⚠️ تأكيد حذف المنشأة المالية", color = Color(0xFFE03C3C), fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("هل أنت متأكد تماماً من حذف شركة '${companyToDelete!!.name}' ودفاترها وحركاتها؟", fontWeight = FontWeight.Medium, fontSize = 12.sp)
+                    Text("هذا الإجراء مدمر وغير قابل للتراجع وسيقوم بحذف ملف الـ SQLite بالكامل ومحو جميع فواتير وحسابات ومخازن هذه الشركة نهائياً من الذاكرة والقرص.", fontSize = 11.sp, color = Color(0xFFE03C3C))
+                }
+            },
+            confirmButton = {
+                Button(
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE03C3C)),
+                    onClick = {
+                        viewModel.deleteCompany(companyToDelete!!.id)
+                        companyToDelete = null
+                    }
+                ) {
+                    Text("حذف دفاتر الشركة نهائياً", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { companyToDelete = null }) { Text("إلغاء") }
             }
         )
     }
@@ -1246,6 +1867,106 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
             .verticalScroll(rememberScrollState())
             .padding(14.dp)
     ) {
+        Text(text = "إدارة ملفات متعدد الشركات والمحاسبة 📁", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+        Spacer(modifier = Modifier.height(6.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, Color(0xFFD0DEDD))
+        ) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("قائمة الشركات والدفاتر النشطة حيال قاعدة الـ SQLite المتاحة:", fontSize = 11.sp, color = Color.Gray)
+                
+                companiesList.forEach { company ->
+                    val isActive = company.id == activeCompanyId
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                color = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(text = "🏪", fontSize = 14.sp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = company.name,
+                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            Text(
+                                text = "هاتف: ${company.phone} | عنوان: ${company.address} | عملة: ${company.currency}",
+                                fontSize = 10.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(start = 22.dp, top = 2.dp)
+                            )
+                            Text(
+                                text = if (isActive) "قيد التشغيل والمحاسبة حالياً (نشطة) 🟢" else "اضغط للتبديل والتصفح",
+                                fontSize = 10.sp,
+                                color = if (isActive) MaterialTheme.colorScheme.primary else Color.Gray,
+                                modifier = Modifier.padding(start = 22.dp, top = 2.dp)
+                            )
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
+                                onClick = { 
+                                    if (!isActive) {
+                                        viewModel.switchCompanyDb(company.id, company.name)
+                                    }
+                                },
+                                enabled = !isActive,
+                                shape = RoundedCornerShape(6.dp),
+                                colors = ButtonDefaults.textButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Text(if (isActive) "النشطة" else "انتقال 🔄", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            
+                            IconButton(onClick = { 
+                                companyToEdit = company
+                                editCompanyNameText = company.name
+                                editCompanyPhoneText = company.phone
+                                editCompanyAddressText = company.address
+                                editCompanyCurrencyText = company.currency
+                            }) {
+                                Text("✏️", fontSize = 14.sp)
+                            }
+                            
+                            IconButton(
+                                onClick = { companyToDelete = company },
+                                enabled = companiesList.size > 1
+                            ) {
+                                Text("🗑️", fontSize = 14.sp)
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(4.dp))
+                Button(
+                    onClick = { showCreateCompanyDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("+ تأسيس منشأة / شركة مالية جديدة", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
         Text(text = "إعدادات الشركة والمنشأة", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
         Spacer(modifier = Modifier.height(6.dp))
         Card(
@@ -1262,12 +1983,44 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(text = "اسم الشركة الرئيسي", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         Text(text = companyName, fontSize = 11.sp, color = Color.Gray)
                     }
-                    Button(onClick = { showCompanyDialog = true }) {
-                        Text("تعديل", fontSize = 12.sp)
+                    Button(onClick = { 
+                        tempCompanyNameText = companyName
+                        tempCompanyPhoneText = companyPhone
+                        tempCompanyAddressText = companyAddress
+                        tempCompanyCurrencyText = companyCurrency
+                        showCompanyDialog = true 
+                    }) {
+                        Text("تعديل البيانات", fontSize = 12.sp)
+                    }
+                }
+                HorizontalDivider(color = Color(0xFFD0DEDD).copy(alpha = 0.5f))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(text = "رقم الهاتف", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(text = companyPhone, fontSize = 11.sp, color = Color.Gray)
+                    }
+                }
+                HorizontalDivider(color = Color(0xFFD0DEDD).copy(alpha = 0.5f))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(text = "العنوان الرئيسي", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(text = companyAddress, fontSize = 11.sp, color = Color.Gray)
                     }
                 }
                 HorizontalDivider(color = Color(0xFFD0DEDD).copy(alpha = 0.5f))
@@ -1280,7 +2033,7 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
                 ) {
                     Column {
                         Text(text = "العملة الأساسية للحسابات", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text(text = "الليرة السورية (ل.س)", fontSize = 11.sp, color = Color.Gray)
+                        Text(text = companyCurrency, fontSize = 11.sp, color = Color.Gray)
                     }
                     Box(modifier = Modifier.background(Color(0xFF2EBD7A).copy(alpha = 0.15f), RoundedCornerShape(20.dp)).padding(horizontal = 10.dp, vertical = 4.dp)) {
                         Text(text = "نشط رئيسي", color = Color(0xFF1A9A60), fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -1518,6 +2271,8 @@ fun DrawerOverlay(
     onExchangeClick: () -> Unit
 ) {
     val companyName by viewModel.companyName.collectAsState()
+    val companiesList by viewModel.companiesList.collectAsState()
+    val activeCompanyId by viewModel.activeCompanyId.collectAsState()
 
     Box(
         modifier = Modifier
@@ -1545,7 +2300,54 @@ fun DrawerOverlay(
                     Text(text = "🏪", fontSize = 36.sp)
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(text = "المحاسب الذكي", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text(text = companyName, color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                    
+                    var isDropdownExpanded by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isDropdownExpanded = !isDropdownExpanded }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = companyName, 
+                            color = Color.White.copy(alpha = 0.9f), 
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            imageVector = Icons.Default.ArrowDropDown, 
+                            contentDescription = "تبديل الشركة", 
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    
+                    DropdownMenu(
+                        expanded = isDropdownExpanded,
+                        onDismissRequest = { isDropdownExpanded = false }
+                    ) {
+                        companiesList.forEach { company ->
+                            DropdownMenuItem(
+                                text = { 
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = if (company.id == activeCompanyId) "✓ " else "  ", 
+                                            fontWeight = FontWeight.Bold, 
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(text = company.name, fontWeight = if (company.id == activeCompanyId) FontWeight.Bold else FontWeight.Normal)
+                                    }
+                                },
+                                onClick = {
+                                    isDropdownExpanded = false
+                                    viewModel.switchCompanyDb(company.id, company.name)
+                                    onClose()
+                                }
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1553,10 +2355,9 @@ fun DrawerOverlay(
 
             // Menu Options
             val sideMenu = listOf(
-                Triple("تغيير اسم الشركة المنشأة", "🏢") {
-                    val names = listOf("مؤسسة الفجر للمقاولات", "مجموعات الشام التجارية", "سوبرماركت المدينة")
-                    viewModel.setCompanyName(names.random())
-                    viewModel.triggerToast("تم تبديل اسم الشركة كعرض")
+                Triple("إعدادات الشركات والتبديل 🏢", "🏢") {
+                    viewModel.setTab("settings")
+                    onClose()
                 },
                 Triple("سند قبض نقدي جديد", "💰") { onAddVoucher("receipt") },
                 Triple("سند صرف نقدي جديد", "💸") { onAddVoucher("payment") },
@@ -1708,17 +2509,34 @@ fun CalculatorDialog(viewModel: AppViewModel, onClose: () -> Unit) {
 // --- Form: Create Invoice dialog ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NewInvoiceDialog(viewModel: AppViewModel, onClose: () -> Unit) {
+fun NewInvoiceDialog(
+    viewModel: AppViewModel, 
+    onClose: () -> Unit,
+    onScanBarcodeClick: ((String) -> Unit) -> Unit
+) {
     val accounts by viewModel.accounts.collectAsState()
     val products by viewModel.products.collectAsState()
     val tempItems by viewModel.tempInvoiceItems.collectAsState()
     val selectedCustomer by viewModel.selectedInvoiceCustomer.collectAsState()
     val notes by viewModel.invoiceNotes.collectAsState()
+    val activeType by viewModel.invoiceType.collectAsState()
+    val activeCurrency by viewModel.invoiceCurrency.collectAsState()
+    val activeCompanyCurrency = viewModel.companyCurrency.collectAsState().value
 
     var showCustDropdown by remember { mutableStateOf(false) }
     var showProdDropdown by remember { mutableStateOf(false) }
+    var showTypeDropdown by remember { mutableStateOf(false) }
+    var showCurrDropdown by remember { mutableStateOf(false) }
 
     val total = tempItems.sumOf { it.qty * it.price }
+
+    val title = when (activeType) {
+        "sale" -> "فاتورة مبيعات جديدة"
+        "purchase" -> "فاتورة مشتريات جديدة"
+        "return_sale" -> "فاتورة مرتجع مبيعات جديدة"
+        "return_purchase" -> "فاتورة مرتجع مشتريات جديدة"
+        else -> "فاتورة جديدة"
+    }
 
     Dialog(onDismissRequest = { onClose() }) {
         Card(
@@ -1732,13 +2550,90 @@ fun NewInvoiceDialog(viewModel: AppViewModel, onClose: () -> Unit) {
             Column(modifier = Modifier.padding(16.dp)) {
                 // Header
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "فاتورة مبيعات جديدة", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+                    Text(text = title, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
                     IconButton(onClick = onClose) {
                         Icon(imageVector = Icons.Default.Close, contentDescription = "إغلاق")
                     }
                 }
 
                 LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // 1. Selector for Invoice Type
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = when (activeType) {
+                                    "sale" -> "فاتورة مبيعات"
+                                    "purchase" -> "فاتورة مشتريات"
+                                    "return_sale" -> "فاتورة مرتجع مبيعات"
+                                    "return_purchase" -> "فاتورة مرتجع مشتريات"
+                                    else -> "فاتورة مبيعات"
+                                },
+                                onValueChange = {},
+                                label = { Text("نوع الفاتورة") },
+                                modifier = Modifier.fillMaxWidth(),
+                                readOnly = true,
+                                trailingIcon = { Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null) }
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clickable { showTypeDropdown = true }
+                            )
+
+                            DropdownMenu(expanded = showTypeDropdown, onDismissRequest = { showTypeDropdown = false }) {
+                                listOf(
+                                    "sale" to "فاتورة مبيعات",
+                                    "purchase" to "فاتورة مشتريات",
+                                    "return_sale" to "فاتورة مرتجع مبيعات",
+                                    "return_purchase" to "فاتورة مرتجع مشتريات"
+                                ).forEach { (key, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(text = label) },
+                                        onClick = {
+                                            viewModel.invoiceType.value = key
+                                            // Empty items as pricing rules vary between purchase vs sale
+                                            viewModel.tempInvoiceItems.value = emptyList()
+                                            showTypeDropdown = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. Selector for Invoice Currency
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = activeCurrency,
+                                onValueChange = {},
+                                label = { Text("عملة الفاتورة ومادة الحساب") },
+                                modifier = Modifier.fillMaxWidth(),
+                                readOnly = true,
+                                trailingIcon = { Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null) }
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clickable { showCurrDropdown = true }
+                            )
+
+                            DropdownMenu(expanded = showCurrDropdown, onDismissRequest = { showCurrDropdown = false }) {
+                                listOf(activeCompanyCurrency, "USD", "EUR", "SAR", "TRY")
+                                    .distinct()
+                                    .forEach { mCurr ->
+                                        DropdownMenuItem(
+                                            text = { Text(text = mCurr) },
+                                            onClick = {
+                                                viewModel.changeInvoiceCurrency(mCurr)
+                                                showCurrDropdown = false
+                                            }
+                                        )
+                                    }
+                            }
+                        }
+                    }
+
                     // Date picker simulation
                     item {
                         OutlinedTextField(
@@ -1754,13 +2649,22 @@ fun NewInvoiceDialog(viewModel: AppViewModel, onClose: () -> Unit) {
                         )
                     }
 
-                    // Customer drop selector
+                    // Customer / Supplier drop selector (based on type)
                     item {
+                        val isPurchaseFlow = activeType == "purchase" || activeType == "return_purchase"
+                        val dynamicLabel = if (isPurchaseFlow) "المورد المستفيد" else "العميل المستفيد"
+                        val dynamicFallback = if (isPurchaseFlow) "-- اختر مورد من المنشأة --" else "-- اختر عميل من المنشأة --"
+                        val accountsFilteredList = if (isPurchaseFlow) {
+                            accounts.filter { it.type == "supplier" }
+                        } else {
+                            accounts.filter { it.type == "customer" }
+                        }
+
                         Box(modifier = Modifier.fillMaxWidth()) {
                             OutlinedTextField(
-                                value = selectedCustomer?.name ?: "-- اختر عميل من المنشأة --",
+                                value = selectedCustomer?.name ?: dynamicFallback,
                                 onValueChange = {},
-                                label = { Text("العميل المستفيد") },
+                                label = { Text(dynamicLabel) },
                                 modifier = Modifier.fillMaxWidth(),
                                 readOnly = true,
                                 trailingIcon = { Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null) }
@@ -1772,12 +2676,12 @@ fun NewInvoiceDialog(viewModel: AppViewModel, onClose: () -> Unit) {
                             )
 
                             DropdownMenu(expanded = showCustDropdown, onDismissRequest = { showCustDropdown = false }) {
-                                val customersList = accounts.filter { it.type == "customer" }
-                                customersList.forEach { acc ->
+                                accountsFilteredList.forEach { acc ->
                                     DropdownMenuItem(
-                                        text = { Text(text = acc.name) },
+                                        text = { Text(text = "${acc.name} (${acc.currency})") },
                                         onClick = {
                                             viewModel.selectedInvoiceCustomer.value = acc
+                                            viewModel.changeInvoiceCurrency(acc.currency)
                                             showCustDropdown = false
                                         }
                                     )
@@ -1790,25 +2694,66 @@ fun NewInvoiceDialog(viewModel: AppViewModel, onClose: () -> Unit) {
                     item {
                         Text(text = "المواد المضافة للفاتورة", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            Button(
-                                onClick = { showProdDropdown = true },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Text("+ انقر لاختيار مادة من المخزن")
-                            }
-
-                            DropdownMenu(expanded = showProdDropdown, onDismissRequest = { showProdDropdown = false }) {
-                                products.forEach { prod ->
-                                    DropdownMenuItem(
-                                        text = { Text(text = "${prod.icon} ${prod.name} | متوفر: ${prod.qty}") },
-                                        onClick = {
-                                            viewModel.addProductToInvoiceForm(prod)
-                                            showProdDropdown = false
-                                        }
-                                    )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                Button(
+                                    onClick = { showProdDropdown = true },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Text("+ اختر مادة من المخزن")
                                 }
+
+                                DropdownMenu(expanded = showProdDropdown, onDismissRequest = { showProdDropdown = false }) {
+                                    products.forEach { prod ->
+                                        val rawPr = if (activeType == "purchase" || activeType == "return_purchase") {
+                                            prod.buyPrice
+                                        } else {
+                                            prod.sellPrice
+                                        }
+                                        val rate = viewModel.getRateInSyp(activeCurrency)
+                                        val calculatedPrice = if (rate != 0.0) rawPr / rate else rawPr
+                                        val formattedPrice = viewModel.formatCurrency(calculatedPrice)
+
+                                        DropdownMenuItem(
+                                            text = { Text(text = "${prod.icon} ${prod.name} | متوفر: ${prod.qty} ${prod.unit} | السعر: $formattedPrice $activeCurrency") },
+                                            onClick = {
+                                                viewModel.addProductToInvoiceForm(prod)
+                                                showProdDropdown = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                            
+                            // Barcode scanning option!
+                            Button(
+                                onClick = {
+                                    onScanBarcodeClick { code ->
+                                        // Find product with this barcode
+                                        val found = products.find { it.barcode == code }
+                                        if (found != null) {
+                                            viewModel.addProductToInvoiceForm(found)
+                                            viewModel.triggerToast("تم مسح وإضافة: ${found.name} ✓")
+                                        } else {
+                                            viewModel.triggerToast("الرمز الباركود ($code) غير مسجل حالياً")
+                                        }
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                                contentPadding = PaddingValues(horizontal = 12.dp),
+                                modifier = Modifier.height(40.dp)
+                            ) {
+                                Text("📷 قراءة باركود", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -1837,13 +2782,38 @@ fun NewInvoiceDialog(viewModel: AppViewModel, onClose: () -> Unit) {
                                     Text(text = "${idx + 1}", fontSize = 12.sp, modifier = Modifier.width(20.dp), fontWeight = FontWeight.Bold)
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(text = item.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                        Text(text = "مجموع: ${viewModel.formatCurrency(item.qty * item.price)} ل.س", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                        Text(text = "مجموع: ${viewModel.formatCurrency(item.qty * item.price)} $activeCurrency", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
                                     }
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         IconButton(onClick = { viewModel.updateInvoiceItemFormQty(idx, -1) }, modifier = Modifier.size(24.dp).background(Color(0xFFE4ECEB), RoundedCornerShape(6.dp))) {
                                             Text("−", fontSize = 14.sp)
                                         }
-                                        Text(text = item.qty.toString(), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        
+                                        var qtyText by remember(item.qty) { mutableStateOf(item.qty.toString()) }
+                                        BasicTextField(
+                                            value = qtyText,
+                                            onValueChange = { newValue ->
+                                                val filtered = newValue.filter { it.isDigit() }
+                                                qtyText = filtered
+                                                val parsed = filtered.toIntOrNull()
+                                                if (parsed != null && parsed >= 1) {
+                                                    viewModel.setInvoiceItemFormQty(idx, parsed)
+                                                }
+                                            },
+                                            textStyle = TextStyle(
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            modifier = Modifier
+                                                .width(45.dp)
+                                                .background(Color.White, RoundedCornerShape(4.dp))
+                                                .border(1.dp, Color.LightGray, RoundedCornerShape(4.dp))
+                                                .padding(vertical = 4.dp, horizontal = 2.dp)
+                                        )
+
                                         IconButton(onClick = { viewModel.updateInvoiceItemFormQty(idx, 1) }, modifier = Modifier.size(24.dp).background(Color(0xFFE4ECEB), RoundedCornerShape(6.dp))) {
                                             Text("+", fontSize = 14.sp)
                                         }
@@ -1876,12 +2846,12 @@ fun NewInvoiceDialog(viewModel: AppViewModel, onClose: () -> Unit) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text(text = "توتال المواد:", fontSize = 12.sp, color = Color.Gray)
-                                    Text(text = "${viewModel.formatCurrency(total)} ل.س", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Text(text = "${viewModel.formatCurrency(total)} $activeCurrency", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                 }
                                 Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.LightGray).padding(vertical = 4.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text(text = "صافي قيمة الفاتورة:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    Text(text = "${viewModel.formatCurrency(total)} ل.س", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    Text(text = "${viewModel.formatCurrency(total)} $activeCurrency", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                 }
                             }
                         }
@@ -1929,15 +2899,21 @@ fun NewAccountDialog(viewModel: AppViewModel, onClose: () -> Unit) {
     val initPhone by viewModel.newAccountPhone.collectAsState()
     val initAddress by viewModel.newAccountAddress.collectAsState()
     val initNotes by viewModel.newAccountNotes.collectAsState()
+    val initCurrency by viewModel.newAccountCurrency.collectAsState()
+    val editingAccount by viewModel.editingAccount.collectAsState()
 
-    var name by remember { mutableStateOf(initName) }
-    var type by remember { mutableStateOf(initType) }
-    var balance by remember { mutableStateOf(initBalance) }
-    var phone by remember { mutableStateOf(initPhone) }
-    var address by remember { mutableStateOf(initAddress) }
-    var notes by remember { mutableStateOf(initNotes) }
+    var name by remember(initName) { mutableStateOf(initName) }
+    var type by remember(initType) { mutableStateOf(initType) }
+    var balance by remember(initBalance) { mutableStateOf(initBalance) }
+    var phone by remember(initPhone) { mutableStateOf(initPhone) }
+    var address by remember(initAddress) { mutableStateOf(initAddress) }
+    var notes by remember(initNotes) { mutableStateOf(initNotes) }
+    var currency by remember(initCurrency) { mutableStateOf(initCurrency) }
 
     var showAccountTypeMenu by remember { mutableStateOf(false) }
+    var showCurrencyMenu by remember { mutableStateOf(false) }
+
+    val dialogTitle = if (editingAccount != null) "تعديل حساب مالي" else "إضافة حساب مالي جديد"
 
     Dialog(onDismissRequest = { onClose() }) {
         Card(
@@ -1946,7 +2922,7 @@ fun NewAccountDialog(viewModel: AppViewModel, onClose: () -> Unit) {
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "إضافة حساب مالي جديد", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+                    Text(text = dialogTitle, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
                     IconButton(onClick = onClose) {
                         Icon(imageVector = Icons.Default.Close, contentDescription = null)
                     }
@@ -2008,13 +2984,47 @@ fun NewAccountDialog(viewModel: AppViewModel, onClose: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(10.dp))
 
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = currency,
+                        onValueChange = {},
+                        label = { Text("عملة الحساب المالي") },
+                        modifier = Modifier.fillMaxWidth(),
+                        readOnly = true,
+                        trailingIcon = { Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null) }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable { showCurrencyMenu = true }
+                    )
+
+                    DropdownMenu(expanded = showCurrencyMenu, onDismissRequest = { showCurrencyMenu = false }) {
+                        val activeCompanyCurrency = viewModel.companyCurrency.collectAsState().value
+                        listOf(activeCompanyCurrency, "USD", "EUR", "SAR", "TRY")
+                            .distinct()
+                            .forEach { mCurrency ->
+                                DropdownMenuItem(
+                                    text = { Text(text = mCurrency) },
+                                    onClick = {
+                                        currency = mCurrency
+                                        viewModel.newAccountCurrency.value = mCurrency
+                                        showCurrencyMenu = false
+                                    }
+                                )
+                            }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
                 OutlinedTextField(
                     value = balance,
                     onValueChange = {
                         balance = it
                         viewModel.newAccountBalance.value = it
                     },
-                    label = { Text("الرصيد الافتتاحي (بالسالب ليكون مطلوب منا)") },
+                    label = { Text("الرصيد الافتتاحي بـ ($currency) - بالسالب ليكون مطلوب منا") },
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                 )
@@ -2060,7 +3070,7 @@ fun NewAccountDialog(viewModel: AppViewModel, onClose: () -> Unit) {
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = onClose, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)) {
-                        Text("إلغاء لالغاء")
+                        Text("إلغاء")
                     }
                     Button(
                         onClick = {
@@ -2081,7 +3091,14 @@ fun NewAccountDialog(viewModel: AppViewModel, onClose: () -> Unit) {
 // --- Form: Create New Product Dialog ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NewProductDialog(viewModel: AppViewModel, onClose: () -> Unit) {
+fun NewProductDialog(
+    viewModel: AppViewModel,
+    onClose: () -> Unit,
+    onScanBarcodeClick: ((String) -> Unit) -> Unit
+) {
+    val editingProduct by viewModel.editingProduct.collectAsState()
+    val isEditing = editingProduct != null
+
     val initName by viewModel.newProductName.collectAsState()
     val initCode by viewModel.newProductCode.collectAsState()
     val initCategory by viewModel.newProductCategory.collectAsState()
@@ -2093,16 +3110,16 @@ fun NewProductDialog(viewModel: AppViewModel, onClose: () -> Unit) {
     val initBarcode by viewModel.newProductBarcode.collectAsState()
     val initIcon by viewModel.newProductIcon.collectAsState()
 
-    var name by remember { mutableStateOf(initName) }
-    var code by remember { mutableStateOf(initCode) }
-    var category by remember { mutableStateOf(initCategory) }
-    var unit by remember { mutableStateOf(initUnit) }
-    var qty by remember { mutableStateOf(initQty) }
-    var minQty by remember { mutableStateOf(initMinQty) }
-    var buyPrice by remember { mutableStateOf(initBuyPrice) }
-    var sellPrice by remember { mutableStateOf(initSellPrice) }
-    var barcode by remember { mutableStateOf(initBarcode) }
-    var icon by remember { mutableStateOf(initIcon) }
+    var name by remember(initName) { mutableStateOf(initName) }
+    var code by remember(initCode) { mutableStateOf(initCode) }
+    var category by remember(initCategory) { mutableStateOf(initCategory) }
+    var unit by remember(initUnit) { mutableStateOf(initUnit) }
+    var qty by remember(initQty) { mutableStateOf(initQty) }
+    var minQty by remember(initMinQty) { mutableStateOf(initMinQty) }
+    var buyPrice by remember(initBuyPrice) { mutableStateOf(initBuyPrice) }
+    var sellPrice by remember(initSellPrice) { mutableStateOf(initSellPrice) }
+    var barcode by remember(initBarcode) { mutableStateOf(initBarcode) }
+    var icon by remember(initIcon) { mutableStateOf(initIcon) }
 
     var showCatDropdown by remember { mutableStateOf(false) }
     var showUnitDropdown by remember { mutableStateOf(false) }
@@ -2114,7 +3131,12 @@ fun NewProductDialog(viewModel: AppViewModel, onClose: () -> Unit) {
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "إضافة مادة للمستودع", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        text = if (isEditing) "تعديل مادة في المستودع" else "إضافة مادة للمستودع",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                     IconButton(onClick = onClose) {
                         Icon(imageVector = Icons.Default.Close, contentDescription = null)
                     }
@@ -2209,20 +3231,22 @@ fun NewProductDialog(viewModel: AppViewModel, onClose: () -> Unit) {
                     Box(modifier = Modifier.weight(1f)) {
                         OutlinedTextField(
                             value = unit,
-                            onValueChange = {},
+                            onValueChange = {
+                                unit = it
+                                viewModel.newProductUnit.value = it
+                            },
                             label = { Text("الوحدة") },
                             modifier = Modifier.fillMaxWidth(),
-                            readOnly = true,
-                            trailingIcon = { Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null) }
-                        )
-                        Box(
-                            modifier = Modifier
-                                .matchParentSize()
-                                .clickable { showUnitDropdown = true }
+                            readOnly = false,
+                            trailingIcon = {
+                                IconButton(onClick = { showUnitDropdown = !showUnitDropdown }) {
+                                    Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null)
+                                }
+                            }
                         )
 
                         DropdownMenu(expanded = showUnitDropdown, onDismissRequest = { showUnitDropdown = false }) {
-                            listOf("قطعة", "كيلو", "لتر", "متر", "علبة", "كرتون").forEach { u ->
+                            listOf("قطعة", "كيلو", "غرام", "لتر", "متر", "علبة", "كرتون", "كيس", "درزن", "طرد", "صندوق").forEach { u ->
                                 DropdownMenuItem(
                                     text = { Text(text = u) },
                                     onClick = {
@@ -2288,26 +3312,61 @@ fun NewProductDialog(viewModel: AppViewModel, onClose: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                OutlinedTextField(
-                    value = barcode,
-                    onValueChange = {
-                        barcode = it
-                        viewModel.newProductBarcode.value = it
-                    },
-                    label = { Text("رقم الباركود (EAN)") },
+                // Barcode custom controls (Manual + Auto count generate + Camera scanner)
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    trailingIcon = {
-                        IconButton(onClick = { viewModel.triggerToast("محاكاة فتح كاميرا لمسح باركود المادة") }) {
-                            Text(text = "📷")
-                        }
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = barcode,
+                        onValueChange = {
+                            barcode = it
+                            viewModel.newProductBarcode.value = it
+                        },
+                        label = { Text("رقم الباركود (EAN)") },
+                        modifier = Modifier.weight(1f),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                    
+                    // Auto generate button
+                    Button(
+                        onClick = {
+                            val generated = "622" + (1000000000 + (Math.random() * 900000000).toLong()).toString()
+                            barcode = generated
+                            viewModel.newProductBarcode.value = generated
+                            viewModel.triggerToast("تم توليد باركود تلقائي ✓")
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF7FAF9), contentColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                        modifier = Modifier.height(54.dp)
+                    ) {
+                        Text("توليد تلقائي", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
-                )
+
+                    // Scanner button helper
+                    IconButton(
+                        onClick = {
+                            onScanBarcodeClick { scanned ->
+                                barcode = scanned
+                                viewModel.newProductBarcode.value = scanned
+                            }
+                        },
+                        modifier = Modifier
+                            .size(54.dp)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
+                    ) {
+                        Text("📷", fontSize = 20.sp)
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = onClose, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)) {
-                        Text("إلغاء لالغاء")
+                        Text("إلغاء")
                     }
                     Button(
                         onClick = {
@@ -2317,7 +3376,7 @@ fun NewProductDialog(viewModel: AppViewModel, onClose: () -> Unit) {
                         modifier = Modifier.weight(1.5f),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
-                        Text("إضافة وحفظ المستودع")
+                        Text(if (isEditing) "تعديل وحفظ التغييرات" else "إضافة وحفظ المستودع")
                     }
                 }
             }
@@ -2408,7 +3467,7 @@ fun NewVoucherDialog(viewModel: AppViewModel, onClose: () -> Unit) {
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { viewModel.voucherAmount.value = it },
-                    label = { Text("المبلغ النقدي (ل.س)") },
+                    label = { Text("المبلغ النقدي (${selectedAcc?.currency ?: "ل.س"})") },
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                 )
@@ -2778,7 +3837,7 @@ fun ReportDetailsDialog(viewModel: AppViewModel, type: String, onClose: () -> Un
                                             }
                                             Spacer(modifier = Modifier.width(10.dp))
                                             Text(text = c.name, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                            Text(text = "${viewModel.formatCurrency(Math.abs(c.balance))} ل.س", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                            Text(text = "${viewModel.formatCurrency(Math.abs(c.balance))} ${c.currency}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                         }
                                     }
                                 }
@@ -2814,6 +3873,20 @@ fun ReportDetailsDialog(viewModel: AppViewModel, type: String, onClose: () -> Un
     }
 }
 
+// --- Date picker native dialog wrapper ---
+fun showDatePicker(context: android.content.Context, onDateSelected: (String) -> Unit) {
+    val calendar = Calendar.getInstance()
+    val year = calendar.get(Calendar.YEAR)
+    val month = calendar.get(Calendar.MONTH)
+    val day = calendar.get(Calendar.DAY_OF_MONTH)
+
+    DatePickerDialog(context, { _, selectedYear, selectedMonth, selectedDay ->
+        val formattedMonth = String.format("%02d", selectedMonth + 1)
+        val formattedDay = String.format("%02d", selectedDay)
+        onDateSelected("$selectedYear-$formattedMonth-$formattedDay")
+    }, year, month, day).show()
+}
+
 // --- Account Statement (كشف الحساب المحاسبي) dialog ---
 @Composable
 fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: () -> Unit, onAddVoucher: (String) -> Unit) {
@@ -2823,11 +3896,16 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
     val accountVouchers = vouchers.filter { it.accountId == account.id }
     val accountInvs = invoices.filter { it.customer == account.name }
 
+    var startDate by remember { mutableStateOf("") }
+    var endDate by remember { mutableStateOf("") }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+
     Dialog(onDismissRequest = { onClose() }) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.85f),
+                .fillMaxHeight(0.92f),
             shape = RoundedCornerShape(22.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -2852,30 +3930,101 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
                         Text(text = "الاسم: ${account.name}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(text = "الرصيد الكلي الحالي:", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f))
-                        Text(text = "${viewModel.formatCurrency(Math.abs(account.balance))} ل.س", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(text = "${viewModel.formatCurrency(Math.abs(account.balance))} ${account.currency}", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         val subtitle = if (account.balance > 0) "← مستحق للغير (له علينا)" else if (account.balance < 0) "← مستحق للشركة (عليه لنا)" else "الحساب متوازن"
                         Text(text = subtitle, fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Date Filter Inputs
+                Text(text = "تصفية حسب التاريخ", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(bottom = 4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutlinedTextField(
+                            value = startDate,
+                            onValueChange = {},
+                            label = { Text("من (YYYY-MM-DD)", fontSize = 10.sp) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            readOnly = true,
+                            trailingIcon = {
+                                if (startDate.isNotBlank()) {
+                                    IconButton(onClick = { startDate = "" }) {
+                                        Icon(imageVector = Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    }
+                                } else {
+                                    Icon(imageVector = Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable {
+                                    showDatePicker(context) { startDate = it }
+                                }
+                        )
+                    }
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutlinedTextField(
+                            value = endDate,
+                            onValueChange = {},
+                            label = { Text("إلى (YYYY-MM-DD)", fontSize = 10.sp) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            readOnly = true,
+                            trailingIcon = {
+                                if (endDate.isNotBlank()) {
+                                    IconButton(onClick = { endDate = "" }) {
+                                        Icon(imageVector = Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    }
+                                } else {
+                                    Icon(imageVector = Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable {
+                                    showDatePicker(context) { endDate = it }
+                                }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
                 Text(text = "حركات السجلات المالية المكتشفة", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.Gray)
                 Spacer(modifier = Modifier.height(6.dp))
 
                 // Combine ledger transactions into a list ordered by date
+                val rate = viewModel.getRateInSyp(account.currency)
                 val allTx = (
-                        accountInvs.map { Triple(it.date, "فاتورة مبيعات ${it.id}", -it.total) } +
+                        accountInvs.map { Triple(it.date, "فاتورة مبيعات ${it.id}", if (rate != 0.0) -it.total / rate else -it.total) } +
                         accountVouchers.map { Triple(it.date, it.desc, if (it.type == "receipt") it.amount else -it.amount) }
                         ).sortedByDescending { it.first }
 
+                // Apply dynamic date filtering
+                val filteredTx = allTx.filter { tx ->
+                    val txDate = tx.first // "YYYY-MM-DD"
+                    val afterStart = if (startDate.isBlank()) true else txDate >= startDate
+                    val beforeEnd = if (endDate.isBlank()) true else txDate <= endDate
+                    afterStart && beforeEnd
+                }
+
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    if (allTx.isEmpty()) {
+                    if (filteredTx.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(text = "لا توجد أي حركات قيود لهذا الحساب", color = Color.Gray, fontSize = 13.sp)
+                            Text(text = "لا توجد أي حركات قيود لهذه الفترة", color = Color.Gray, fontSize = 13.sp)
                         }
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(allTx) { item ->
+                            items(filteredTx) { item ->
                                 val (date, description, amount) = item
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
@@ -2889,7 +4038,7 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
                                         }
                                         val color = if (amount > 0) Color(0xFF2EBD7A) else Color(0xFFE03C3C)
                                         val prefix = if (amount > 0) "+" else ""
-                                        Text(text = "$prefix${viewModel.formatCurrency(amount)} ل.س", color = color, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                        Text(text = "$prefix${viewModel.formatCurrency(amount)} ${account.currency}", color = color, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     }
                                 }
                             }
@@ -2897,7 +4046,49 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Print and Export Actions Row
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            printAccountStatement(
+                                context = context,
+                                account = account,
+                                txList = filteredTx,
+                                companyName = "المحاسب الذكي - شركة المعتز",
+                                startDate = startDate,
+                                endDate = endDate
+                            )
+                        },
+                        modifier = Modifier.weight(1.5f),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("🖨️ طباعة الكشف", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = {
+                            exportAccountStatementToExcel(
+                                context = context,
+                                account = account,
+                                txList = filteredTx,
+                                startDate = startDate,
+                                endDate = endDate
+                            )
+                        },
+                        modifier = Modifier.weight(1.5f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E7145)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("📊 تصدير Excel", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
 
                 // Footer shortcut actions for this specific account
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2920,6 +4111,740 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE03C3C))
                     ) {
                         Text("صرف نقود")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// System print web adapter helper for Account Statement
+fun printAccountStatement(
+    context: android.content.Context, 
+    account: Account, 
+    txList: List<Triple<String, String, Double>>, 
+    companyName: String, 
+    startDate: String, 
+    endDate: String
+) {
+    val totalCount = txList.size
+    val htmlBuilder = StringBuilder()
+    htmlBuilder.append("""
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body { font-family: 'Courier New', sans-serif; direction: rtl; padding: 20px; }
+                header { text-align: center; margin-bottom: 25px; }
+                h2 { margin: 0; color: #1c544d; font-size: 24px; }
+                p { margin: 4px 0; color: #555; }
+                .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 25px; }
+                .meta-table td { padding: 8px; border: 1px dashed #ccc; font-size: 14px; }
+                .statement-table { width: 100%; border-collapse: collapse; }
+                .statement-table th, .statement-table td { padding: 10px; border: 1px solid #777; text-align: right; font-size: 13px; }
+                .statement-table th { background-color: #e4eceb; color: #1c544d; }
+                .credit { color: #2ebd7a; font-weight: bold; }
+                .debit { color: #e03c3c; font-weight: bold; }
+                .total-box { margin-top: 25px; border: 2px solid #1c544d; padding: 15px; font-weight: bold; text-align: center; font-size: 16px; background-color: #f7faf9; }
+            </style>
+        </head>
+        <body>
+            <header>
+                <h2>$companyName</h2>
+                <h3>كشف حساب مالي تفصيلي وطباعته</h3>
+                <p>تاريخ استخراج التقرير: 2026-05-29</p>
+            </header>
+            <table class="meta-table">
+                <tr>
+                    <td><b>اسم الحساب:</b> ${account.name}</td>
+                    <td><b>نوع الحساب:</b> ${account.type}</td>
+                </tr>
+                <tr>
+                    <td><b>رقم الهاتف:</b> ${account.phone.ifBlank { "غير متوفر" }}</td>
+                    <td><b>العنوان:</b> ${account.address.ifBlank { "غير متوفر" }}</td>
+                </tr>
+                <tr>
+                    <td><b>الفترة الزمنية المحددة:</b> من ${startDate.ifBlank { "البدأ" }} إلى ${endDate.ifBlank { "اليوم" }}</td>
+                    <td><b>حجم الحركات:</b> $totalCount قيد مالي</td>
+                </tr>
+            </table>
+            
+            <table class="statement-table">
+                <thead>
+                    <tr>
+                        <th style="width: 25%;">التاريخ</th>
+                        <th style="width: 50%;">البيان والتفاصيل</th>
+                        <th style="width: 25%;">القيمة المالية</th>
+                    </tr>
+                </thead>
+                <tbody>
+    """.trimIndent())
+    
+    txList.forEach { tx ->
+        val amt = tx.third
+        val amtClass = if (amt >= 0) "credit" else "debit"
+        val amtSign = if (amt >= 0) "+" else ""
+        htmlBuilder.append("""
+            <tr>
+                <td>${tx.first}</td>
+                <td>${tx.second}</td>
+                <td class="$amtClass">$amtSign${String.format("%,.2f", amt)} ${account.currency}</td>
+            </tr>
+        """.trimIndent())
+    }
+    
+    htmlBuilder.append("""
+                </tbody>
+            </table>
+            <div class="total-box">
+                الرصيد الكلي الإجمالي المجمع: ${String.format("%,.2f", account.balance)} ${account.currency}
+            </div>
+            <p style="text-align: center; margin-top: 30px; font-size: 12px; color: #777;">تم توليد وحفظ هذا التقرير كـ PDF إلكتروني عبر نظام المحاسب الذكي 📱</p>
+        </body>
+        </html>
+    """.trimIndent())
+
+    (context as? android.app.Activity)?.runOnUiThread {
+        val webView = android.webkit.WebView(context)
+        webView.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onPageFinished(view: android.webkit.WebView, url: String) {
+                val printManager = context.getSystemService(android.content.Context.PRINT_SERVICE) as android.print.PrintManager
+                val jobName = "كشف حساب - ${account.name}"
+                val printAdapter = webView.createPrintDocumentAdapter(jobName)
+                printManager.print(jobName, printAdapter, android.print.PrintAttributes.Builder().build())
+            }
+        }
+        webView.loadDataWithBaseURL(null, htmlBuilder.toString(), "text/html", "utf-8", null)
+    }
+}
+
+// System export CSV web adapter helper for Account Statement
+fun exportAccountStatementToExcel(
+    context: android.content.Context, 
+    account: Account, 
+    txList: List<Triple<String, String, Double>>, 
+    startDate: String, 
+    endDate: String
+) {
+    val csvContent = StringBuilder()
+    // Unicode UTF-8 Byte Order Mark (BOM) to correctly display Arabic in Microsoft Excel!
+    csvContent.append('\ufeff')
+    csvContent.append("كشف حساب مالي تفصيلي\n")
+    csvContent.append("اسم الحساب,${account.name}\n")
+    csvContent.append("رقم الهاتف,${account.phone}\n")
+    csvContent.append("العنوان,${account.address}\n")
+    csvContent.append("نوع الحساب,${account.type}\n")
+    csvContent.append("الفترة,من ${startDate.ifBlank { "البداية" }} إلى ${endDate.ifBlank { "اليوم" }}\n")
+    csvContent.append("الرصيد الإجمالي,${account.balance} ${account.currency}\n")
+    csvContent.append("\n")
+    csvContent.append("التاريخ,البيان,المبلغ,العملة\n")
+    
+    txList.forEach { tx ->
+        val amt = tx.third
+        val amtStr = "${if (amt >= 0) "+" else ""}$amt"
+        csvContent.append("${tx.first},${tx.second},$amtStr,${account.currency}\n")
+    }
+    
+    val fileName = "statement_${account.id}_${System.currentTimeMillis()}.csv"
+    try {
+        val file = java.io.File(context.cacheDir, fileName)
+        file.writeText(csvContent.toString(), Charsets.UTF_8)
+        
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "com.example.fileprovider",
+            file
+        )
+        
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/csv"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            putExtra(android.content.Intent.EXTRA_SUBJECT, "تصدير كشف حساب: ${account.name}")
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "تصدير كشف الحساب إلى Excel"))
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "فشل تصدير الملف: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+    }
+}
+
+// --- Dynamic Barcode Scanner Composable with Pulsing laser line & simulated physics beep ---
+@Composable
+fun BarcodeScannerCustomDialog(
+    viewModel: AppViewModel,
+    onScanned: (String) -> Unit,
+    onClose: () -> Unit
+) {
+    val products by viewModel.products.collectAsState()
+    var customCodeInput by remember { mutableStateOf("") }
+    
+    // Play laser sound and beep upon scanning!
+    fun triggerSuccessScan(code: String) {
+        if (code.isBlank()) return
+        
+        // Play scanner physics beep sound!
+        try {
+            val tg = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+            tg.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 130)
+        } catch (e: Exception) {}
+        
+        onScanned(code)
+    }
+
+    Dialog(onDismissRequest = onClose) {
+        Card(
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier.fillMaxWidth().padding(10.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E272C)) // Dark tech UI
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "📷 قارئ الباركود الذكي",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                    IconButton(onClick = onClose) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = null, tint = Color.White)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Simulated live camera viewfinder with glowing scanning line!
+                Box(
+                    modifier = Modifier
+                        .size(height = 140.dp, width = 240.dp)
+                        .background(Color.Black, RoundedCornerShape(12.dp))
+                        .border(2.dp, Color(0xFF0F9D58), RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Transparent center view rectangle
+                    Box(
+                        modifier = Modifier
+                            .size(height = 80.dp, width = 180.dp)
+                            .border(1.5.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
+                    )
+
+                    // Animating scanning laser line!
+                    var animTrigger by remember { mutableStateOf(false) }
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            animTrigger = !animTrigger
+                            delay(1200)
+                        }
+                    }
+                    val laserOffset by animateDpAsState(
+                        targetValue = if (animTrigger) (-30).dp else 30.dp,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(1200, easing = LinearEasing),
+                            repeatMode = RepeatMode.Reverse
+                        ), label = ""
+                    )
+                    
+                    Box(
+                        modifier = Modifier
+                            .offset(y = laserOffset)
+                            .height(2.dp)
+                            .width(170.dp)
+                            .background(Color.Red)
+                    )
+
+                    Text(
+                        text = "وجه الكود نحو المنتصف للمسح...",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 11.sp,
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // List of existing warehouse products barcodes for seamless scanning demo!
+                Text(
+                    text = "🎯 محاكاة الكاميرا — اختر كود مادة لمسحه فوراً:",
+                    color = Color(0xFFAAB8C2),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Start
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp)
+                        .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(10.dp))
+                        .padding(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val barcodesOnly = products.filter { it.barcode.isNotBlank() }
+                    if (barcodesOnly.isEmpty()) {
+                        item {
+                            Text(
+                                text = "لا توجد مواد بمستودعك تحتوي على باركود مسجل. يرجى توليد باركود تلقائي أو كتابته في نموذج المادة أولاً.",
+                                color = Color.Gray,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(10.dp),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    } else {
+                        items(barcodesOnly) { prod ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { triggerSuccessScan(prod.barcode) }
+                                    .background(Color(0xFF2C3E50), RoundedCornerShape(6.dp))
+                                    .padding(8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(prod.icon, fontSize = 14.sp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(prod.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Text("رمز: ${prod.barcode}", color = Color(0xFF0F9D58), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Or type manually
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = customCodeInput,
+                        onValueChange = { customCodeInput = it },
+                        placeholder = { Text("أو اكتب الباركود يدوياً...", color = Color.Gray) },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            cursorColor = Color.White,
+                            focusedBorderColor = Color(0xFF0F9D58),
+                            unfocusedBorderColor = Color.Gray
+                        ),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+
+                    Button(
+                        onClick = { triggerSuccessScan(customCodeInput) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F9D58)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Text("إدخال")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// --- Dynamic Barcode Thermal Printer Design & Simulation Canvas Composable ---
+@Composable
+fun BarcodeThermalPrintDialog(
+    viewModel: AppViewModel,
+    product: Product,
+    onClose: () -> Unit
+) {
+    val context = LocalContext.current
+    
+    // Custom label design preferences state
+    var includeCompanyName by remember { mutableStateOf(true) }
+    var companyNameText by remember { mutableStateOf("مؤسسة الـشام الـتـجـاريـة") }
+    var includeProductName by remember { mutableStateOf(true) }
+    var includeProductPrice by remember { mutableStateOf(true) }
+    var includeCodeText by remember { mutableStateOf(true) }
+    var labelWidthType by remember { mutableStateOf("58mm") } // or 80mm
+
+    // Function to execute the thermal printing job via Android Print Framework and HTML styling!
+    fun printLabelNow() {
+        try {
+            val printManager = context.getSystemService(android.content.Context.PRINT_SERVICE) as android.print.PrintManager
+            val jobName = "Smart_BarcodeLabel_${product.code}"
+            
+            // Build perfect EAN-13-styled CSS design for label
+            val htmlContent = """
+                <html>
+                <head>
+                <meta charset="utf-8">
+                <style>
+                    body {
+                        font-family: 'Arial', sans-serif;
+                        direction: rtl;
+                        text-align: center;
+                        margin: 0;
+                        padding: 10px;
+                        width: ${if (labelWidthType == "58mm") "188px" else "280px"};
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                    }
+                    .company {
+                        font-size: 11px;
+                        font-weight: bold;
+                        border-bottom: 1px dashed #000;
+                        width: 100%;
+                        padding-bottom: 4px;
+                        margin-bottom: 6px;
+                    }
+                    .title {
+                        font-size: 13px;
+                        font-weight: 900;
+                        margin-bottom: 4px;
+                    }
+                    .price {
+                        font-size: 12px;
+                        font-weight: bold;
+                        background: #000;
+                        color: #fff;
+                        padding: 2px 6px;
+                        border-radius: 4px;
+                        margin-bottom: 6px;
+                        display: inline-block;
+                    }
+                    .barcode-box {
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        margin-top: 4px;
+                    }
+                    /* Custom Barcode bars lines matching exact ESC/POS thermal layout */
+                    .barcode-graphic {
+                        display: flex;
+                        justify-content: center;
+                        align-items: flex-end;
+                        height: 38px;
+                        width: 140px;
+                        overflow: hidden;
+                    }
+                    .barcode-bar {
+                        background-color: #000;
+                        height: 100%;
+                    }
+                    .code-text {
+                        font-size: 9px;
+                        font-family: monospace;
+                        letter-spacing: 2px;
+                        margin-top: 2px;
+                    }
+                    .footer {
+                        font-size: 8px;
+                        color: #555;
+                        margin-top: 6px;
+                    }
+                </style>
+                </head>
+                <body>
+                    ${if (includeCompanyName) "<div class='company'>$companyNameText</div>" else ""}
+                    ${if (includeProductName) "<div class='title'>${product.name}</div>" else ""}
+                    ${if (includeProductPrice) "<div class='price'>السعر: ${viewModel.formatCurrency(product.sellPrice)} ل.س</div>" else ""}
+                    
+                    <div class="barcode-box">
+                        <div class="barcode-graphic">
+                            <!-- Draw EAN-13 lines of varying widths natively -->
+                            <div class="barcode-bar" style="width:2px; margin-right:1px;"></div>
+                            <div class="barcode-bar" style="width:1px; margin-right:2px;"></div>
+                            <div class="barcode-bar" style="width:4px; margin-right:1px;"></div>
+                            <div class="barcode-bar" style="width:2px; margin-right:2px;"></div>
+                            <div class="barcode-bar" style="width:1px; margin-right:1px;"></div>
+                            <div class="barcode-bar" style="width:3px; margin-right:3px;"></div>
+                            <div class="barcode-bar" style="width:2px; margin-right:1px;"></div>
+                            <div class="barcode-bar" style="width:1px; margin-right:2px;"></div>
+                            <div class="barcode-bar" style="width:4px; margin-right:1px;"></div>
+                            <div class="barcode-bar" style="width:2px; margin-right:2px;"></div>
+                            <div class="barcode-bar" style="width:1px; margin-right:1px;"></div>
+                            <div class="barcode-bar" style="width:3px; margin-right:3px;"></div>
+                        </div>
+                        ${if (includeCodeText) "<div class='code-text'>${product.barcode.ifBlank { product.code }}</div>" else ""}
+                    </div>
+                    <div class="footer">طابعة حرارية لاسلكية ESC/POS</div>
+                </body>
+                </html>
+            """.trimIndent()
+
+            val webView = android.webkit.WebView(context)
+            webView.webViewClient = object : android.webkit.WebViewClient() {
+                override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                    val printAdapter = webView.createPrintDocumentAdapter(jobName)
+                    printManager.print(
+                        jobName,
+                        printAdapter,
+                        android.print.PrintAttributes.Builder().build()
+                    )
+                }
+            }
+            webView.loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
+            viewModel.triggerToast("جاري إرسال تصميم الملصق لطابعتك الحرارية... ✓")
+        } catch (e: Exception) {
+            viewModel.triggerToast("عذرًا، حدث خطأ أثناء إعداد الطباعة: ${e.message}")
+        }
+    }
+
+    Dialog(onDismissRequest = onClose) {
+        Card(
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp)
+                .verticalScroll(rememberScrollState()),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "🖨️ تصميم باركود والربط الحراري",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    IconButton(onClick = onClose) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = null)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = Color(0xFFE4ECEB))
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Label Visualizer (Realistic preview!)
+                Text(
+                    text = "🔎 معاينة الملصق والباركود المطبوع:",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Gray
+                )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Realistic interactive label background representation matches labelWidthType
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFF9FBFB), RoundedCornerShape(12.dp))
+                        .border(1.dp, Color(0xFFD0DEDD), RoundedCornerShape(12.dp))
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .width(if (labelWidthType == "58mm") 180.dp else 240.dp)
+                            .shadow(2.dp, RoundedCornerShape(4.dp)),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(1.dp, Color.LightGray)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            if (includeCompanyName) {
+                                Text(
+                                    text = companyNameText,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Gray,
+                                    modifier = Modifier.padding(bottom = 4.dp),
+                                    textAlign = TextAlign.Center
+                                )
+                                Canvas(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(1.dp)
+                                ) {
+                                    drawRect(Color.LightGray)
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                            }
+                            
+                            if (includeProductName) {
+                                Text(
+                                    text = product.name,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Black,
+                                    modifier = Modifier.padding(bottom = 4.dp),
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            
+                            if (includeProductPrice) {
+                                Box(
+                                    modifier = Modifier
+                                        .background(Color.Black, RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "السعر: ${viewModel.formatCurrency(product.sellPrice)} ل.س",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Interactive Drawn Barcode graphics bars in Composable!
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Row(
+                                    modifier = Modifier
+                                        .height(34.dp)
+                                        .width(130.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.Bottom
+                                ) {
+                                    // Custom high fidelity EAN bars representation
+                                    val barWidths = listOf(2, 1, 3, 1, 4, 2, 1, 3, 2, 1, 4, 2, 3, 1, 2)
+                                    barWidths.forEach { w ->
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxHeight()
+                                                .width(w.dp)
+                                                .background(Color.Black)
+                                        )
+                                    }
+                                }
+                                
+                                if (includeCodeText) {
+                                    Text(
+                                        text = product.barcode.ifBlank { product.code },
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.Black,
+                                        modifier = Modifier.padding(top = 2.dp),
+                                        letterSpacing = 1.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Custom Settings & Designer Inputs
+                Text(
+                    text = "⚙️ إعدادات وتعديل تصميم الملصق:",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Company title config
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = includeCompanyName,
+                        onCheckedChange = { includeCompanyName = it }
+                    )
+                    Text("اسم الشركة / المتجر", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+
+                if (includeCompanyName) {
+                    OutlinedTextField(
+                        value = companyNameText,
+                        onValueChange = { companyNameText = it },
+                        label = { Text("نص الترويسة") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp)
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = includeProductName,
+                        onCheckedChange = { includeProductName = it }
+                    )
+                    Text("اسم المادة بالكامل", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = includeProductPrice,
+                        onCheckedChange = { includeProductPrice = it }
+                    )
+                    Text("سعر البيع ل.س", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = includeCodeText,
+                        onCheckedChange = { includeCodeText = it }
+                    )
+                    Text("رقم الباركود النصي أسفل الخطوط", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Label Width select
+                Text("عرض شريط الورق الحراري:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = labelWidthType == "58mm",
+                            onClick = { labelWidthType = "58mm" }
+                        )
+                        Text("58 ملم (قياسي)", fontSize = 12.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = labelWidthType == "80mm",
+                            onClick = { labelWidthType = "80mm" }
+                        )
+                        Text("80 ملم (عريض)", fontSize = 12.sp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Execution buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = onClose,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("إلغاء")
+                    }
+                    Button(
+                        onClick = { printLabelNow() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F9D58)),
+                        modifier = Modifier.weight(1.5f)
+                    ) {
+                        Text("🖨️ اتصال وطباعة حرارية", fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 }
             }

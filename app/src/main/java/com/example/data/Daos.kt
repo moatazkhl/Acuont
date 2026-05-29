@@ -32,6 +32,9 @@ interface AppDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAccount(account: Account)
 
+    @Delete
+    suspend fun deleteAccount(account: Account)
+
     @Query("UPDATE accounts SET balance = :newBalance WHERE id = :id")
     suspend fun updateAccountBalance(id: String, newBalance: Double)
 
@@ -44,6 +47,9 @@ interface AppDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProduct(product: Product)
+
+    @Delete
+    suspend fun deleteProduct(product: Product)
 
     @Query("UPDATE products SET qty = :newQty WHERE id = :id")
     suspend fun updateProductQuantity(id: String, newQty: Int)
