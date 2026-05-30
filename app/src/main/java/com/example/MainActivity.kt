@@ -47,6 +47,25 @@ import com.example.ui.theme.SmartAccountantTheme
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import com.google.mlkit.vision.barcode.BarcodeScanning
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
+import com.google.mlkit.vision.common.InputImage
+import java.util.concurrent.Executors
+import androidx.lifecycle.LifecycleOwner
+import androidx.compose.ui.platform.LocalLifecycleOwner
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -4296,19 +4315,82 @@ fun exportAccountStatementToExcel(
     }
 }
 
-// --- Dynamic Barcode Scanner Composable with Pulsing laser line & simulated physics beep ---
+// --- Helper Barcode Analyzer for CameraX using Google ML Kit ---
+@androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
+class BarcodeAnalyzer(
+    private val onBarcodeDetected: (String) -> Unit
+) : ImageAnalysis.Analyzer {
+    private val scanner = com.google.mlkit.vision.barcode.BarcodeScanning.getClient()
+
+    override fun analyze(imageProxy: ImageProxy) {
+        val mediaImage = imageProxy.image
+        if (mediaImage != null) {
+            val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+            scanner.process(image)
+                .addOnSuccessListener { barcodes ->
+                    for (barcode in barcodes) {
+                        val rawValue = barcode.rawValue
+                        if (rawValue != null && rawValue.trim().isNotEmpty()) {
+                            onBarcodeDetected(rawValue)
+                            break
+                        }
+                    }
+                }
+                .addOnFailureListener {}
+                .addOnCompleteListener {
+                    imageProxy.close()
+                }
+        } else {
+            imageProxy.close()
+        }
+    }
+}
+
+// --- Dynamic Barcode Scanner Composable with Real Live CameraX Viewfinder and Pulsing Laser ---
 @Composable
 fun BarcodeScannerCustomDialog(
     viewModel: AppViewModel,
     onScanned: (String) -> Unit,
     onClose: () -> Unit
 ) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val products by viewModel.products.collectAsState()
     var customCodeInput by remember { mutableStateOf("") }
     
-    // Play laser sound and beep upon scanning!
+    // Check and request camera permission dynamically in Compose
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { granted ->
+            hasCameraPermission = granted
+            if (!granted) {
+                viewModel.triggerToast("يجب السماح بالوصول للكاميرا لقراءة الباركود")
+            }
+        }
+    )
+
+    // Trigger permission request automatically on Dialog open
+    LaunchedEffect(Unit) {
+        if (!hasCameraPermission) {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    // Keep track so we triggers scanning ONLY ONCE
+    var scanningFinished by remember { mutableStateOf(false) }
+
     fun triggerSuccessScan(code: String) {
-        if (code.isBlank()) return
+        if (code.isBlank() || scanningFinished) return
+        scanningFinished = true
         
         // Play scanner physics beep sound!
         try {
@@ -4335,7 +4417,7 @@ fun BarcodeScannerCustomDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "📷 قارئ الباركود الذكي",
+                        text = "📷 قارئ الباركود والمنتجات",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp
@@ -4347,60 +4429,132 @@ fun BarcodeScannerCustomDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Simulated live camera viewfinder with glowing scanning line!
+                // Camera viewfinder / Permission Request view
                 Box(
                     modifier = Modifier
-                        .size(height = 140.dp, width = 240.dp)
+                        .size(height = 160.dp, width = 260.dp)
                         .background(Color.Black, RoundedCornerShape(12.dp))
-                        .border(2.dp, Color(0xFF0F9D58), RoundedCornerShape(12.dp)),
+                        .border(2.dp, if (hasCameraPermission) Color(0xFF0F9D58) else Color.Red, RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    // Transparent center view rectangle
-                    Box(
-                        modifier = Modifier
-                            .size(height = 80.dp, width = 180.dp)
-                            .border(1.5.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
-                    )
+                    if (hasCameraPermission) {
+                        // Real CameraX Viewfinder
+                        AndroidView(
+                            factory = { ctx ->
+                                val previewView = PreviewView(ctx).apply {
+                                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                                }
+                                val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                                cameraProviderFuture.addListener({
+                                    try {
+                                        val cameraProvider = cameraProviderFuture.get()
+                                        val preview = Preview.Builder().build().also {
+                                            it.setSurfaceProvider(previewView.surfaceProvider)
+                                        }
+                                        val imageAnalysis = ImageAnalysis.Builder()
+                                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                            .build()
+                                            .also {
+                                                it.setAnalyzer(Executors.newSingleThreadExecutor(), BarcodeAnalyzer { code ->
+                                                    // Process barcode callbacks on the UI/Main Thread
+                                                    (ctx as? android.app.Activity)?.runOnUiThread {
+                                                        triggerSuccessScan(code)
+                                                    } ?: run {
+                                                        triggerSuccessScan(code)
+                                                    }
+                                                })
+                                            }
+                                        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                                        cameraProvider.unbindAll()
+                                        cameraProvider.bindToLifecycle(
+                                            lifecycleOwner,
+                                            cameraSelector,
+                                            preview,
+                                            imageAnalysis
+                                        )
+                                    } catch (exc: Exception) {
+                                        // Empty camera hardware handling (eg inside standard android raw emulator)
+                                    }
+                                }, ContextCompat.getMainExecutor(ctx))
+                                previewView
+                            },
+                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp))
+                        )
 
-                    // Animating scanning laser line!
-                    var animTrigger by remember { mutableStateOf(false) }
-                    LaunchedEffect(Unit) {
-                        while (true) {
-                            animTrigger = !animTrigger
-                            delay(1200)
+                        // Overlaid Viewfinder Target Frame
+                        Box(
+                            modifier = Modifier
+                                .size(height = 90.dp, width = 190.dp)
+                                .border(1.5.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                        )
+
+                        // Pulsing red laser line!
+                        var animTrigger by remember { mutableStateOf(false) }
+                        LaunchedEffect(Unit) {
+                            while (true) {
+                                animTrigger = !animTrigger
+                                delay(1200)
+                            }
+                        }
+                        val laserOffset by animateDpAsState(
+                            targetValue = if (animTrigger) (-35).dp else 35.dp,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(1200, easing = LinearEasing),
+                                repeatMode = RepeatMode.Reverse
+                            ), label = ""
+                        )
+                        Box(
+                            modifier = Modifier
+                                .offset(y = laserOffset)
+                                .height(2.dp)
+                                .width(180.dp)
+                                .background(Color.Red)
+                        )
+
+                        Text(
+                            text = "وجه رمز الباركود نحو المنتصف للمسح التلقائي",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                .padding(bottom = 6.dp)
+                        )
+                    } else {
+                        // Request Permission CTA layout
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(14.dp)
+                        ) {
+                            Text(
+                                "الكاميرا مغلقة أو الصلاحية غير ممنوحة",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Button(
+                                onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                            ) {
+                                Text("تفعيل صلاحية الكاميرا 📷", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
-                    val laserOffset by animateDpAsState(
-                        targetValue = if (animTrigger) (-30).dp else 30.dp,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(1200, easing = LinearEasing),
-                            repeatMode = RepeatMode.Reverse
-                        ), label = ""
-                    )
-                    
-                    Box(
-                        modifier = Modifier
-                            .offset(y = laserOffset)
-                            .height(2.dp)
-                            .width(170.dp)
-                            .background(Color.Red)
-                    )
-
-                    Text(
-                        text = "وجه الكود نحو المنتصف للمسح...",
-                        color = Color.White.copy(alpha = 0.5f),
-                        fontSize = 11.sp,
-                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp)
-                    )
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // List of existing warehouse products barcodes for seamless scanning demo!
+                // List of existing warehouse products barcodes for seamless scanning demo / backup input!
                 Text(
-                    text = "🎯 محاكاة الكاميرا — اختر كود مادة لمسحه فوراً:",
+                    text = "🎯 أو اختر منتجاً لمحاكاة الباركود من قائمة المستودع:",
                     color = Color(0xFFAAB8C2),
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = TextAlign.Start
@@ -4411,7 +4565,7 @@ fun BarcodeScannerCustomDialog(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(120.dp)
+                        .height(115.dp)
                         .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(10.dp))
                         .padding(4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -4449,7 +4603,7 @@ fun BarcodeScannerCustomDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Or type manually
                 Row(
@@ -4460,7 +4614,7 @@ fun BarcodeScannerCustomDialog(
                     OutlinedTextField(
                         value = customCodeInput,
                         onValueChange = { customCodeInput = it },
-                        placeholder = { Text("أو اكتب الباركود يدوياً...", color = Color.Gray) },
+                        placeholder = { Text("أو اكتب الباركود يدوياً...", color = Color.Gray, fontSize = 12.sp) },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(10.dp),
                         colors = OutlinedTextFieldDefaults.colors(
