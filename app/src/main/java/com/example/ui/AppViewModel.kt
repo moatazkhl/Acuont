@@ -56,6 +56,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _vouchers = MutableStateFlow<List<Voucher>>(emptyList())
     val vouchers: StateFlow<List<Voucher>> = _vouchers.asStateFlow()
 
+    private val _categories = MutableStateFlow<List<ProductCategory>>(emptyList())
+    val categories: StateFlow<List<ProductCategory>> = _categories.asStateFlow()
+
     private var activeCollectionJob: kotlinx.coroutines.Job? = null
 
     init {
@@ -142,6 +145,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             launch {
                 repo.vouchers.collect {
                     _vouchers.value = it
+                }
+            }
+            launch {
+                repo.categories.collect {
+                    _categories.value = it
                 }
             }
         }
@@ -653,6 +661,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.deleteProduct(product)
             triggerToast("تم حذف المادة بنجاح ✓")
+        }
+    }
+
+    fun saveCategory(name: String, icon: String) {
+        val trimmedName = name.trim()
+        if (trimmedName.isBlank()) {
+            triggerToast("اسم الفئة لا يمكن أن يكون فارغاً")
+            return
+        }
+        val id = "cat_" + System.currentTimeMillis().toString().takeLast(6)
+        viewModelScope.launch {
+            repository.insertCategory(ProductCategory(id = id, name = trimmedName, icon = icon.ifBlank { "📁" }))
+            triggerToast("تمت إضافة الفئة ($trimmedName) بنجاح ✓")
+        }
+    }
+
+    fun deleteCategory(category: ProductCategory) {
+        viewModelScope.launch {
+            repository.deleteCategory(category)
+            triggerToast("تم حذف الفئة (${category.name}) ✓")
         }
     }
 

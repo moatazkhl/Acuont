@@ -11,6 +11,15 @@ class AppRepository(private val appDao: AppDao) {
     val accounts: Flow<List<Account>> = appDao.getAllAccounts()
     val products: Flow<List<Product>> = appDao.getAllProducts()
     val vouchers: Flow<List<Voucher>> = appDao.getAllVouchers()
+    val categories: Flow<List<ProductCategory>> = appDao.getAllCategories()
+
+    suspend fun insertCategory(category: ProductCategory) = withContext(Dispatchers.IO) {
+        appDao.insertCategory(category)
+    }
+
+    suspend fun deleteCategory(category: ProductCategory) = withContext(Dispatchers.IO) {
+        appDao.deleteCategory(category)
+    }
 
     suspend fun insertInvoiceRaw(invoice: Invoice) = withContext(Dispatchers.IO) {
         appDao.insertInvoice(invoice)
@@ -108,10 +117,19 @@ class AppRepository(private val appDao: AppDao) {
         appDao.deleteAllAccounts()
         appDao.deleteAllProducts()
         appDao.deleteAllVouchers()
+        appDao.deleteAllCategories()
     }
 
     suspend fun loadCustomSeedData() = withContext(Dispatchers.IO) {
         // Force-seed even if data exists
+        appDao.deleteAllCategories()
+        val seedCategories = listOf(
+            ProductCategory("other", "أخرى", "📦"),
+            ProductCategory("food", "غذاء", "🍬"),
+            ProductCategory("electronics", "إلكترونيات", "🔌")
+        )
+        seedCategories.forEach { appDao.insertCategory(it) }
+
         val seedAccounts = listOf(
             Account("A001", "أبو محمد التاجر", "customer", 250000.0, "0999111222", "دمشق - الميدان", "عميل قديم وممتاز", "#4a7fa5"),
             Account("A002", "شركة الفرات للتجارة", "customer", -180000.0, "0988333444", "حلب - السليمانية", "شركة توزيع رئيسية", "#2ebd7a"),
@@ -211,6 +229,16 @@ class AppRepository(private val appDao: AppDao) {
     }
 
     suspend fun prepopulateIfNeeded() = withContext(Dispatchers.IO) {
+        val existingCats = appDao.getAllCategories().first()
+        if (existingCats.isEmpty()) {
+            val seedCategories = listOf(
+                ProductCategory("other", "أخرى", "📦"),
+                ProductCategory("food", "غذاء", "🍬"),
+                ProductCategory("electronics", "إلكترونيات", "🔌")
+            )
+            seedCategories.forEach { appDao.insertCategory(it) }
+        }
+
         val existingAccounts = appDao.getAllAccounts().first()
         if (existingAccounts.isEmpty()) {
             // Seed Accounts

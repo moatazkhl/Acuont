@@ -27,6 +27,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.animation.core.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -98,6 +100,8 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
     // Barcode scanner simulation states
     var isScannerOpen by remember { mutableStateOf(false) }
     var scannerOnScanned by remember { mutableStateOf<((String) -> Unit)?>(null) }
+
+    var isManageCategoriesOpen by remember { mutableStateOf(false) }
 
     // Toast listener from ViewModel flows
     LaunchedEffect(Unit) {
@@ -178,7 +182,8 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
                             onPrintBarcodeClick = { prod ->
                                 selectedBarcodeProduct = prod
                                 isPrintBarcodeOpen = true
-                            }
+                            },
+                            onManageCategoriesClick = { isManageCategoriesOpen = true }
                         )
                         "reports" -> ReportsTabScreen(
                             viewModel = viewModel,
@@ -484,6 +489,13 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
                 viewModel = viewModel,
                 product = selectedBarcodeProduct!!,
                 onClose = { isPrintBarcodeOpen = false }
+            )
+        }
+
+        if (isManageCategoriesOpen) {
+            ManageCategoriesDialog(
+                viewModel = viewModel,
+                onClose = { isManageCategoriesOpen = false }
             )
         }
     }
@@ -1007,9 +1019,11 @@ fun AccountItemRow(
 fun ProductsTabScreen(
     viewModel: AppViewModel,
     onEditProductClick: (Product) -> Unit,
-    onPrintBarcodeClick: (Product) -> Unit
+    onPrintBarcodeClick: (Product) -> Unit,
+    onManageCategoriesClick: () -> Unit
 ) {
     val products by viewModel.products.collectAsState()
+    val categories by viewModel.categories.collectAsState()
     val filter by viewModel.productFilter.collectAsState()
     val search by viewModel.productSearch.collectAsState()
 
@@ -1040,37 +1054,53 @@ fun ProductsTabScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
-        // Tab Filters
+        // Tab Filters with horizontal scroll and a quick Category manager button
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFFE4ECEB), RoundedCornerShape(12.dp))
-                .padding(4.dp)
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            val filters = listOf(
-                "all" to "الكل",
-                "food" to "غذاء",
-                "electronics" to "إلكترونيات",
-                "other" to "أخرى"
-            )
-            filters.forEach { (key, label) ->
-                val active = filter == key
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (active) MaterialTheme.colorScheme.surface else Color.Transparent)
-                        .clickable { viewModel.setProductFilter(key) }
-                        .padding(vertical = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = label,
-                        color = if (active) MaterialTheme.colorScheme.primary else Color(0xFF4A6B65),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
-                    )
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState())
+                    .background(Color(0xFFE4ECEB), RoundedCornerShape(12.dp))
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                val filters = listOf("all" to "الكل") + categories.map { it.id to it.name }
+                filters.forEach { (key, label) ->
+                    val active = filter == key
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (active) MaterialTheme.colorScheme.surface else Color.Transparent)
+                            .clickable { viewModel.setProductFilter(key) }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (active) MaterialTheme.colorScheme.primary else Color(0xFF4A6B65),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
                 }
+            }
+
+            // Quick button to open category manager dialog
+            Button(
+                onClick = onManageCategoriesClick,
+                contentPadding = PaddingValues(horizontal = 10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                    contentColor = MaterialTheme.colorScheme.primary
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.height(40.dp)
+            ) {
+                Text("📁+", fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -3098,6 +3128,7 @@ fun NewProductDialog(
 ) {
     val editingProduct by viewModel.editingProduct.collectAsState()
     val isEditing = editingProduct != null
+    val categories by viewModel.categories.collectAsState()
 
     val initName by viewModel.newProductName.collectAsState()
     val initCode by viewModel.newProductCode.collectAsState()
@@ -3194,11 +3225,8 @@ fun NewProductDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     // Category Picker
                     Box(modifier = Modifier.weight(1f)) {
-                        val catLabel = when (category) {
-                            "food" -> "غذاء"
-                            "electronics" -> "إلكترونيات"
-                            else -> "أخرى"
-                        }
+                        val currentCategoryObj = categories.find { it.id == category }
+                        val catLabel = currentCategoryObj?.name ?: "أخرى"
                         OutlinedTextField(
                             value = catLabel,
                             onValueChange = {},
@@ -3214,12 +3242,12 @@ fun NewProductDialog(
                         )
 
                         DropdownMenu(expanded = showCatDropdown, onDismissRequest = { showCatDropdown = false }) {
-                            listOf("other" to "أخرى", "food" to "غذاء", "electronics" to "إلكترونيات").forEach { (key, text) ->
+                            categories.forEach { catObj ->
                                 DropdownMenuItem(
-                                    text = { Text(text = text) },
+                                    text = { Text(text = "${catObj.icon}   ${catObj.name}") },
                                     onClick = {
-                                        category = key
-                                        viewModel.newProductCategory.value = key
+                                        category = catObj.id
+                                        viewModel.newProductCategory.value = catObj.id
                                         showCatDropdown = false
                                     }
                                 )
@@ -4846,6 +4874,200 @@ fun BarcodeThermalPrintDialog(
                     ) {
                         Text("🖨️ اتصال وطباعة حرارية", fontWeight = FontWeight.Bold, color = Color.White)
                     }
+                }
+            }
+        }
+    }
+}
+
+// --- Manage Custom Categories Dialog ---
+@Composable
+fun ManageCategoriesDialog(
+    viewModel: AppViewModel,
+    onClose: () -> Unit
+) {
+    val categories by viewModel.categories.collectAsState()
+    val products by viewModel.products.collectAsState()
+
+    var newCatName by remember { mutableStateOf("") }
+    
+    // Default emojis list for user selection
+    val availableEmojis = listOf("📁", "📦", "🍬", "🔌", "🍔", "🛠️", "👕", "📚", "🎨", "🥑", "🚗", "🧸")
+    var selectedEmoji by remember { mutableStateOf("📁") }
+
+    Dialog(onDismissRequest = onClose) {
+        Card(
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(18.dp)
+                    .fillMaxWidth()
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "📁 إدارة فئات المنتجات",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                    IconButton(onClick = onClose) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "إغلاق")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(color = Color(0xFFE4ECEB))
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Scrollable List of Categories
+                Text(
+                    text = "الفئات الحالية:",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp)
+                        .background(Color(0xFFF0F5F4), RoundedCornerShape(12.dp))
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(categories) { cat ->
+                        val isBuiltIn = cat.id in listOf("food", "electronics", "other")
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color.White, RoundedCornerShape(8.dp))
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(cat.icon, fontSize = 20.sp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = cat.name,
+                                    fontSize = 13.sp,
+                                    color = Color.Black,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            if (isBuiltIn) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "🔒 فئة أساسية",
+                                    tint = Color.Gray.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            } else {
+                                IconButton(
+                                    onClick = { viewModel.deleteCategory(cat) },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "حذف الفئة",
+                                        tint = Color.Red.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = Color(0xFFE4ECEB))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Add Category Form
+                Text(
+                    text = "🔨 إضافة فئة جديدة:",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Emoji picker horizontal scroll
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    availableEmojis.forEach { emoji ->
+                        val isSelected = selectedEmoji == emoji
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent)
+                                .border(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.LightGray,
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                                .clickable { selectedEmoji = emoji },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(emoji, fontSize = 18.sp)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = newCatName,
+                    onValueChange = { newCatName = it },
+                    label = { Text("اسم الفئة الجديدة") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary
+                    ),
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Button(
+                    onClick = {
+                        if (newCatName.isNotBlank() && newCatName.trim() != "أخرى") {
+                            viewModel.saveCategory(newCatName, selectedEmoji)
+                            newCatName = "" // clear input
+                        } else if (newCatName.trim() == "أخرى") {
+                            viewModel.triggerToast("الفئة (أخرى) موجودة كفئة افتراضية")
+                        } else {
+                            viewModel.triggerToast("يرجى كتابة اسم الفئة أولاً")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("إضافة الفئة الجديدة", fontWeight = FontWeight.Bold, color = Color.White)
                 }
             }
         }

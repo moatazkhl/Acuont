@@ -35,7 +35,7 @@ data class Product(
     @PrimaryKey val id: String, // e.g. "P001"
     val name: String,
     val code: String,
-    val cat: String,           // "food" (غذاء), "electronics" (إلكترونيات), "other" (أخرى)
+    val cat: String,           // ID of the ProductCategory (e.g. "food", "electronics", or custom code)
     val unit: String,          // e.g., "كيلو", "قطعة"
     val qty: Int,
     val minQty: Int,
@@ -43,6 +43,13 @@ data class Product(
     val sellPrice: Double,
     val barcode: String,
     val icon: String           // Emoji icon
+)
+
+@Entity(tableName = "categories")
+data class ProductCategory(
+    @PrimaryKey val id: String, // e.g., "food", "electronics", or auto-generated "CAT-123"
+    val name: String,           // e.g., "غذاء"
+    val icon: String = "📁"     // Emoji/Icon
 )
 
 @Entity(tableName = "vouchers")

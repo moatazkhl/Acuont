@@ -57,6 +57,19 @@ interface AppDao {
     @Query("DELETE FROM products")
     suspend fun deleteAllProducts()
 
+    // Categories
+    @Query("SELECT * FROM categories ORDER BY name ASC")
+    fun getAllCategories(): Flow<List<ProductCategory>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCategory(category: ProductCategory)
+
+    @Delete
+    suspend fun deleteCategory(category: ProductCategory)
+
+    @Query("DELETE FROM categories")
+    suspend fun deleteAllCategories()
+
     // Vouchers
     @Query("SELECT * FROM vouchers ORDER BY date DESC, id DESC")
     fun getAllVouchers(): Flow<List<Voucher>>
