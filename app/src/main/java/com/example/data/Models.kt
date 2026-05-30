@@ -14,7 +14,9 @@ data class Invoice(
     val status: String,        // "draft" (مسودة), "saved" (حفظ وطباعة)
     val notes: String,
     val itemsJson: String,      // Serialized JSON array of invoice items
-    val currency: String = "ل.س"
+    val currency: String = "ل.س",
+    val paymentType: String = "cash", // "cash" (نقدي), "credit" (آجل)
+    val paidAmount: Double = 0.0 // دفعة مسجلة لفاتورة الآجل
 )
 
 @Entity(tableName = "accounts")
@@ -60,6 +62,15 @@ data class Voucher(
     val amount: Double,
     val desc: String,
     val date: String
+)
+
+@Entity(tableName = "exchange_rates")
+data class ExchangeRate(
+    @PrimaryKey val date: String, // e.g., "2026-05-30"
+    val rateUSD: Double,
+    val rateEUR: Double,
+    val rateSAR: Double,
+    val rateTRY: Double
 )
 
 data class InvoiceItem(

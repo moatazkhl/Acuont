@@ -111,6 +111,8 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
     var isCurrenciesOpen by remember { mutableStateOf(false) }
     var activeReportType by remember { mutableStateOf<String?>(null) } // daily, pl, topProducts, topCustomers, lowStock
     var selectedStatementAccount by remember { mutableStateOf<Account?>(null) }
+    var dashboardReportStartDate by remember { mutableStateOf("") }
+    var dashboardReportEndDate by remember { mutableStateOf("") }
     
     // Barcode designer and print states
     var isPrintBarcodeOpen by remember { mutableStateOf(false) }
@@ -182,7 +184,10 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
                     when (currentTab) {
                         "invoices" -> InvoicesTabScreen(
                             viewModel = viewModel,
-                            onNewInvoiceClick = { isNewInvoiceOpen = true }
+                            onNewInvoiceClick = {
+                                viewModel.clearInvoiceForm()
+                                isNewInvoiceOpen = true
+                            }
                         )
                         "accounts" -> AccountsTabScreen(
                             viewModel = viewModel,
@@ -206,6 +211,10 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
                         )
                         "reports" -> ReportsTabScreen(
                             viewModel = viewModel,
+                            startDate = dashboardReportStartDate,
+                            onStartDateChange = { dashboardReportStartDate = it },
+                            endDate = dashboardReportEndDate,
+                            onEndDateChange = { dashboardReportEndDate = it },
                             onReportClick = { report -> activeReportType = report },
                             onExchangeClick = { isCurrenciesOpen = true }
                         )
@@ -388,11 +397,17 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
         LargeFloatingActionButton(
             onClick = {
                 when (currentTab) {
-                    "invoices" -> isNewInvoiceOpen = true
+                    "invoices" -> {
+                        viewModel.clearInvoiceForm()
+                        isNewInvoiceOpen = true
+                    }
                     "accounts" -> isNewAccountOpen = true
                     "products" -> isNewProductOpen = true
                     "reports" -> isCurrenciesOpen = true
-                    else -> isNewInvoiceOpen = true
+                    else -> {
+                        viewModel.clearInvoiceForm()
+                        isNewInvoiceOpen = true
+                    }
                 }
             },
             modifier = Modifier
@@ -475,6 +490,8 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
             ReportDetailsDialog(
                 viewModel = viewModel,
                 type = activeReportType!!,
+                initialStartDate = dashboardReportStartDate,
+                initialEndDate = dashboardReportEndDate,
                 onClose = { activeReportType = null }
             )
         }
@@ -662,7 +679,14 @@ fun InvoicesTabScreen(viewModel: AppViewModel, onNewInvoiceClick: () -> Unit) {
 
                     val dateItems = groupedByDate[date] ?: emptyList()
                     items(dateItems) { inv ->
-                        InvoiceItemRow(invoice = inv, viewModel = viewModel)
+                        InvoiceItemRow(
+                            invoice = inv, 
+                            viewModel = viewModel,
+                            onEditClick = {
+                                viewModel.loadInvoiceForEditing(inv)
+                                onNewInvoiceClick()
+                            }
+                        )
                     }
                 }
             }
@@ -671,7 +695,9 @@ fun InvoicesTabScreen(viewModel: AppViewModel, onNewInvoiceClick: () -> Unit) {
 }
 
 @Composable
-fun InvoiceItemRow(invoice: Invoice, viewModel: AppViewModel) {
+fun InvoiceItemRow(invoice: Invoice, viewModel: AppViewModel, onEditClick: () -> Unit) {
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
     val typeColor = when (invoice.type) {
         "sale" -> Color(0xFF2EBD7A)
         "purchase" -> MaterialTheme.colorScheme.primary
@@ -681,6 +707,34 @@ fun InvoiceItemRow(invoice: Invoice, viewModel: AppViewModel) {
         "sale" -> "مبيع"
         "purchase" -> "شراء"
         else -> "مرتجع"
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("تأكيد حذف الفاتورة", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            text = { 
+                Text(
+                    "هل أنت متأكد من رغبتك في حذف الفاتورة ذات الرقم (${invoice.id}) للعميل (${invoice.customer})؟\nهذا الإجراء سيقوم بإعادة كميات المنتجات إلى المخزن وإلغاء التأثير المالي والعمولات وسندات القبض/الصرف التلقائية للفاتورة.",
+                    fontSize = 13.sp
+                ) 
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteInvoiceCascaded(invoice)
+                        showDeleteConfirm = false
+                    }
+                ) {
+                    Text("نعم، تأكيد الحذف", color = Color(0xFFE03C3C), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("إلغاء الأمر", color = Color.Gray)
+                }
+            }
+        )
     }
 
     Card(
@@ -693,7 +747,7 @@ fun InvoiceItemRow(invoice: Invoice, viewModel: AppViewModel) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(text = invoice.id, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     if (invoice.status == "draft") {
                         Box(
                             modifier = Modifier
@@ -702,7 +756,7 @@ fun InvoiceItemRow(invoice: Invoice, viewModel: AppViewModel) {
                         ) {
                             Text(text = "مسودة", color = Color(0xFFC07D10), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                     }
                     Box(
                         modifier = Modifier
@@ -710,6 +764,16 @@ fun InvoiceItemRow(invoice: Invoice, viewModel: AppViewModel) {
                             .padding(horizontal = 8.dp, vertical = 2.dp)
                     ) {
                         Text(text = typeLabel, color = typeColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    val payLabel = if (invoice.paymentType == "cash") "نقدي" else "آجل"
+                    val payColor = if (invoice.paymentType == "cash") Color(0xFF2EBD7A) else Color(0xFFE67E22)
+                    Box(
+                        modifier = Modifier
+                            .background(payColor.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(text = payLabel, color = payColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -721,7 +785,13 @@ fun InvoiceItemRow(invoice: Invoice, viewModel: AppViewModel) {
                         Text(text = "🖨️", fontSize = 14.sp)
                     }
                     IconButton(
-                        onClick = { viewModel.deleteInvoiceCascaded(invoice) },
+                        onClick = onEditClick,
+                        modifier = Modifier.size(32.dp).background(Color(0xFFE4ECEB), RoundedCornerShape(8.dp))
+                    ) {
+                        Text(text = "✏️", fontSize = 14.sp)
+                    }
+                    IconButton(
+                        onClick = { showDeleteConfirm = true },
                         modifier = Modifier.size(32.dp).background(Color(0xFFE4ECEB), RoundedCornerShape(8.dp))
                     ) {
                         Text(text = "🗑️", fontSize = 14.sp)
@@ -1308,14 +1378,85 @@ fun ProductItemRow(
 // ==========================================
 // 4. REPORTS TAB PAGE & CHARTS
 // ==========================================
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReportsTabScreen(viewModel: AppViewModel, onReportClick: (String) -> Unit, onExchangeClick: () -> Unit) {
+fun ReportsTabScreen(
+    viewModel: AppViewModel,
+    startDate: String,
+    onStartDateChange: (String) -> Unit,
+    endDate: String,
+    onEndDateChange: (String) -> Unit,
+    onReportClick: (String) -> Unit,
+    onExchangeClick: () -> Unit
+) {
     val invoices by viewModel.invoices.collectAsState()
+    val vouchers by viewModel.vouchers.collectAsState()
+    val accounts by viewModel.accounts.collectAsState()
+    val exchangeRatesList by viewModel.exchangeRates.collectAsState()
 
-    // Aggregate generic database metrics
-    val totalSales = invoices.filter { it.status == "saved" && it.type == "sale" }.sumOf { it.total }
-    val totalProfit = invoices.filter { it.status == "saved" && it.type == "sale" }.sumOf { it.profit }
-    val totalExpenses = 125000.0 // Custom constant simulating ledger expenses
+    val usdDefault by viewModel.rateUSD.collectAsState()
+    val eurDefault by viewModel.rateEUR.collectAsState()
+    val sarDefault by viewModel.rateSAR.collectAsState()
+    val tryDefault by viewModel.rateTRY.collectAsState()
+
+    // 1. Filtered raw transactions based on selected date ranges
+    val filteredInvoices = remember(invoices, startDate, endDate) {
+        invoices.filter {
+            (startDate.isEmpty() || it.date >= startDate) &&
+            (endDate.isEmpty() || it.date <= endDate)
+        }
+    }
+
+    val filteredVouchers = remember(vouchers, startDate, endDate) {
+        vouchers.filter {
+            (startDate.isEmpty() || it.date >= startDate) &&
+            (endDate.isEmpty() || it.date <= endDate)
+        }
+    }
+
+    // 2. Aggregate sales, expense and profit converting each transaction with its day's exchange rate
+    val totalSales = remember(filteredInvoices, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
+        filteredInvoices.filter { it.status == "saved" && it.type == "sale" }.sumOf { inv ->
+            val rateDateObj = exchangeRatesList.find { it.date == inv.date }
+            val factor = when (inv.currency) {
+                "USD" -> rateDateObj?.rateUSD ?: usdDefault
+                "EUR" -> rateDateObj?.rateEUR ?: eurDefault
+                "SAR" -> rateDateObj?.rateSAR ?: sarDefault
+                "TRY" -> rateDateObj?.rateTRY ?: tryDefault
+                else -> 1.0
+            }
+            inv.total * factor
+        }
+    }
+
+    val totalProfit = remember(filteredInvoices, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
+        filteredInvoices.filter { it.status == "saved" && it.type == "sale" }.sumOf { inv ->
+            val rateDateObj = exchangeRatesList.find { it.date == inv.date }
+            val factor = when (inv.currency) {
+                "USD" -> rateDateObj?.rateUSD ?: usdDefault
+                "EUR" -> rateDateObj?.rateEUR ?: eurDefault
+                "SAR" -> rateDateObj?.rateSAR ?: sarDefault
+                "TRY" -> rateDateObj?.rateTRY ?: tryDefault
+                else -> 1.0
+            }
+            inv.profit * factor
+        }
+    }
+
+    val totalExpenses = remember(filteredVouchers, accounts, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
+        filteredVouchers.filter { it.type == "payment" }.sumOf { v ->
+            val acc = accounts.find { it.id == v.accountId }
+            val rateDateObj = exchangeRatesList.find { it.date == v.date }
+            val factor = when (acc?.currency) {
+                "USD" -> rateDateObj?.rateUSD ?: usdDefault
+                "EUR" -> rateDateObj?.rateEUR ?: eurDefault
+                "SAR" -> rateDateObj?.rateSAR ?: sarDefault
+                "TRY" -> rateDateObj?.rateTRY ?: tryDefault
+                else -> 1.0
+            }
+            v.amount * factor
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -1323,6 +1464,88 @@ fun ReportsTabScreen(viewModel: AppViewModel, onReportClick: (String) -> Unit, o
             .verticalScroll(rememberScrollState())
             .padding(14.dp)
     ) {
+        // Date filters for primary reports metrics and charts
+        Text(
+            text = "📅 فرز وتصفية تقارير الفترة الزمنية:",
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            color = Color.Gray,
+            modifier = Modifier.padding(bottom = 6.dp)
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            Box(modifier = Modifier.weight(1f)) {
+                OutlinedTextField(
+                    value = if (startDate.isEmpty()) "من تاريخ" else startDate,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("من تاريخ", fontSize = 10.sp) },
+                    textStyle = TextStyle(fontSize = 11.sp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        focusedContainerColor = Color(0xFFF0F5F4),
+                        unfocusedContainerColor = Color(0xFFF0F5F4)
+                    ),
+                    trailingIcon = {
+                        if (startDate.isNotEmpty()) {
+                            IconButton(onClick = { onStartDateChange("") }) {
+                                Icon(imageVector = Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                            }
+                        } else {
+                            Icon(imageVector = Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clickable { showDatePicker(context) { onStartDateChange(it) } }
+                )
+            }
+
+            Box(modifier = Modifier.weight(1f)) {
+                OutlinedTextField(
+                    value = if (endDate.isEmpty()) "إلى تاريخ" else endDate,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("إلى تاريخ", fontSize = 10.sp) },
+                    textStyle = TextStyle(fontSize = 11.sp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        focusedContainerColor = Color(0xFFF0F5F4),
+                        unfocusedContainerColor = Color(0xFFF0F5F4)
+                    ),
+                    trailingIcon = {
+                        if (endDate.isNotEmpty()) {
+                            IconButton(onClick = { onEndDateChange("") }) {
+                                Icon(imageVector = Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                            }
+                        } else {
+                            Icon(imageVector = Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clickable { showDatePicker(context) { onEndDateChange(it) } }
+                )
+            }
+        }
+
         // Horizontal grid metrics bar
         Box(
             modifier = Modifier
@@ -2685,17 +2908,27 @@ fun NewInvoiceDialog(
 
                     // Date picker simulation
                     item {
-                        OutlinedTextField(
-                            value = "2026-05-23", // Current simulated app UTC date
-                            onValueChange = { },
-                            label = { Text("تاريخ الفاتورة") },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = false,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                disabledTextColor = Color.Black,
-                                disabledBorderColor = Color.LightGray
+                        val invoiceDate by viewModel.selectedInvoiceDate.collectAsState()
+                        val context = androidx.compose.ui.platform.LocalContext.current
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = invoiceDate.ifBlank { "2026-05-30" },
+                                onValueChange = { },
+                                label = { Text("تاريخ الفاتورة") },
+                                modifier = Modifier.fillMaxWidth(),
+                                readOnly = true,
+                                trailingIcon = { Icon(imageVector = Icons.Default.DateRange, contentDescription = null) }
                             )
-                        )
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clickable {
+                                        showDatePicker(context) { date ->
+                                            viewModel.selectedInvoiceDate.value = date
+                                        }
+                                    }
+                            )
+                        }
                     }
 
                     // Customer / Supplier drop selector (based on type)
@@ -2733,6 +2966,83 @@ fun NewInvoiceDialog(
                                             viewModel.changeInvoiceCurrency(acc.currency)
                                             showCustDropdown = false
                                         }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 3. Payment Type & Down Payment Option
+                    item {
+                        val payType by viewModel.invoicePaymentType.collectAsState()
+                        val paidAmt by viewModel.invoicePaidAmount.collectAsState()
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(text = "طريقة الدفع والتحصيل", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color(0xFFE4ECEB), RoundedCornerShape(10.dp))
+                                        .padding(4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (payType == "cash") MaterialTheme.colorScheme.primary else Color.Transparent)
+                                            .clickable { 
+                                                viewModel.invoicePaymentType.value = "cash"
+                                                viewModel.invoicePaidAmount.value = ""
+                                            }
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "نقدي (كاش)",
+                                            color = if (payType == "cash") Color.White else Color(0xFF4A6B65),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (payType == "credit") MaterialTheme.colorScheme.primary else Color.Transparent)
+                                            .clickable { 
+                                                viewModel.invoicePaymentType.value = "credit"
+                                            }
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "آجل (رصيد ذمم)",
+                                            color = if (payType == "credit") Color.White else Color(0xFF4A6B65),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                }
+
+                                if (payType == "credit") {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    OutlinedTextField(
+                                        value = paidAmt,
+                                        onValueChange = { viewModel.invoicePaidAmount.value = it },
+                                        label = { Text("تسجيل دفعة نقدية مسددة ($activeCurrency)") },
+                                        placeholder = { Text("أدخل قيمة الدفعة (مثال: 50000)") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp),
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        leadingIcon = { Text("💵", modifier = Modifier.padding(horizontal = 6.dp)) },
+                                        singleLine = true
                                     )
                                 }
                             }
@@ -3569,21 +3879,42 @@ fun CurrenciesRateDialog(viewModel: AppViewModel, onClose: () -> Unit) {
     val sar by viewModel.rateSAR.collectAsState()
     val tryVal by viewModel.rateTRY.collectAsState()
 
+    val exchangeRatesList by viewModel.exchangeRates.collectAsState()
+
+    var selectedRateDate by remember { mutableStateOf("2026-05-30") }
+
+    // Look up if we have stored rates for selectedRateDate in SQLite database
+    val matchingRate = remember(exchangeRatesList, selectedRateDate) {
+        exchangeRatesList.find { it.date == selectedRateDate }
+    }
+
+    // Reactive input fields linked to currently selected date rate or global rates otherwise
+    var inputUsd by remember(matchingRate, usd) { mutableStateOf(matchingRate?.rateUSD?.toInt()?.toString() ?: usd.toInt().toString()) }
+    var inputEur by remember(matchingRate, eur) { mutableStateOf(matchingRate?.rateEUR?.toInt()?.toString() ?: eur.toInt().toString()) }
+    var inputSar by remember(matchingRate, sar) { mutableStateOf(matchingRate?.rateSAR?.toInt()?.toString() ?: sar.toInt().toString()) }
+    var inputTry by remember(matchingRate, tryVal) { mutableStateOf(matchingRate?.rateTRY?.toInt()?.toString() ?: tryVal.toInt().toString()) }
+
     var convertAmountText by remember { mutableStateOf("") }
     var convertFromCurrency by remember { mutableStateOf("USD") }
     var convertResultDisplayStr by remember { mutableStateOf("0 ل.س") }
 
     fun runCurrencyMath() {
         val amt = convertAmountText.toDoubleOrNull() ?: 0.0
+        val u = inputUsd.toDoubleOrNull() ?: usd
+        val e = inputEur.toDoubleOrNull() ?: eur
+        val s = inputSar.toDoubleOrNull() ?: sar
+        val t = inputTry.toDoubleOrNull() ?: tryVal
         val rateMultiplier = when (convertFromCurrency) {
-            "USD" -> usd
-            "EUR" -> eur
-            "SAR" -> sar
-            else -> tryVal
+            "USD" -> u
+            "EUR" -> e
+            "SAR" -> s
+            else -> t
         }
         val resultingSyp = amt * rateMultiplier
         convertResultDisplayStr = viewModel.formatCurrency(resultingSyp) + " ل.س"
     }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     Dialog(onDismissRequest = { onClose() }) {
         Card(
@@ -3599,33 +3930,67 @@ fun CurrenciesRateDialog(viewModel: AppViewModel, onClose: () -> Unit) {
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
-                Text(text = "آخر تحديث: 23 مايو 2026 — الليرة السورية هي الأساس", fontSize = 11.sp, color = Color.Gray)
-                Spacer(modifier = Modifier.height(10.dp))
 
-                // Exchange Rates Editable Cards list using safe class container
-                val currenciesRateList = listOf(
-                    CurrencyRateConfig("🇺🇸 دولار أمريكي", "USD", usd) { viewModel.rateUSD.value = it },
-                    CurrencyRateConfig("🇪🇺 يورو أوروبي", "EUR", eur) { viewModel.rateEUR.value = it },
-                    CurrencyRateConfig("🇸🇦 ريال سعودي", "SAR", sar) { viewModel.rateSAR.value = it },
-                    CurrencyRateConfig("🇹🇷 ليرة تركية", "TRY", tryVal) { viewModel.rateTRY.value = it }
+                // Date picker trigger for historical exchange rate editing
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                        .clickable {
+                            showDatePicker(context) { selectedRateDate = it }
+                        }
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("صرف اليوم والتواريخ التاريخية:", fontSize = 11.sp, color = Color.Gray)
+                        Text("📅 تاريخ تعديل الصرف: $selectedRateDate", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    }
+                    Text("سجل التاريخ ⚙️", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                }
+
+                if (matchingRate != null) {
+                    Text(
+                        text = "✓ وجد أسعار مخزنة سابقاً لهذا التاريخ بقاعدة البيانات",
+                        color = Color(0xFF2EBD7A),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+                    )
+                } else {
+                    Text(
+                        text = "• سيتم إنشاء باقة أسعار تاريخية جديدة لهذا الموعد عند الحفظ",
+                        color = Color.Gray,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val editableRates = listOf(
+                    Triple("🇺🇸 دولار أمريكي (USD)", inputUsd) { valNew: String -> inputUsd = valNew },
+                    Triple("🇪🇺 يورو أوروبي (EUR)", inputEur) { valNew: String -> inputEur = valNew },
+                    Triple("🇸🇦 ريال سعودي (SAR)", inputSar) { valNew: String -> inputSar = valNew },
+                    Triple("🇹🇷 ليرة تركية (TRY)", inputTry) { valNew: String -> inputTry = valNew }
                 )
 
-                currenciesRateList.forEach { config ->
+                editableRates.forEach { (title, currentStr, updateFn) ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = config.title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        Text(text = title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
                         OutlinedTextField(
-                            value = config.stateVal.toInt().toString(),
+                            value = currentStr,
                             onValueChange = { stringVal ->
-                                val doubleVal = stringVal.toDoubleOrNull() ?: config.stateVal
-                                config.setter(doubleVal)
+                                updateFn(stringVal)
                                 runCurrencyMath()
                             },
-                            modifier = Modifier.width(100.dp),
+                            modifier = Modifier.width(110.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true
                         )
@@ -3634,10 +3999,10 @@ fun CurrenciesRateDialog(viewModel: AppViewModel, onClose: () -> Unit) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 HorizontalDivider(color = Color.LightGray)
                 Spacer(modifier = Modifier.height(10.dp))
-                Text(text = "آلة محول أسعار الصرف الفوري", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text(text = "برنامج محوّل أسعار صرف العملات", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Interactive calculation inputs row
@@ -3687,15 +4052,44 @@ fun CurrenciesRateDialog(viewModel: AppViewModel, onClose: () -> Unit) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
-                Button(
-                    onClick = {
-                        viewModel.triggerToast("تم حفظ وتعديل أسعار العملات بالمخزن المحاسبي")
-                        onClose()
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("حفظ وتحديث الأسعار")
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            val u = inputUsd.toDoubleOrNull() ?: usd
+                            val e = inputEur.toDoubleOrNull() ?: eur
+                            val s = inputSar.toDoubleOrNull() ?: sar
+                            val t = inputTry.toDoubleOrNull() ?: tryVal
+                            // Save as global defaults
+                            viewModel.rateUSD.value = u
+                            viewModel.rateEUR.value = e
+                            viewModel.rateSAR.value = s
+                            viewModel.rateTRY.value = t
+                            // Save for selected date as well
+                            viewModel.saveExchangeRateForDate(selectedRateDate, u, e, s, t)
+                            onClose()
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("حفظ وتأكيد", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Button(
+                        onClick = {
+                            val u = inputUsd.toDoubleOrNull() ?: usd
+                            val e = inputEur.toDoubleOrNull() ?: eur
+                            val s = inputSar.toDoubleOrNull() ?: sar
+                            val t = inputTry.toDoubleOrNull() ?: tryVal
+                            // ONLY save for this historical date in SQLite
+                            viewModel.saveExchangeRateForDate(selectedRateDate, u, e, s, t)
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
+                    ) {
+                        Text("تثبيت تاريخي فقط", fontSize = 11.sp)
+                    }
                 }
             }
         }
@@ -3707,13 +4101,166 @@ fun CurrenciesRateDialog(viewModel: AppViewModel, onClose: () -> Unit) {
 // 10. REVIEWS STATEMENTS & REPORTS MODAL DETAILS
 // ==========================================
 @Composable
-fun ReportDetailsDialog(viewModel: AppViewModel, type: String, onClose: () -> Unit) {
+fun ReportDetailsDialog(
+    viewModel: AppViewModel,
+    type: String,
+    initialStartDate: String,
+    initialEndDate: String,
+    onClose: () -> Unit
+) {
     val invoices by viewModel.invoices.collectAsState()
     val products by viewModel.products.collectAsState()
     val accounts by viewModel.accounts.collectAsState()
+    val vouchers by viewModel.vouchers.collectAsState()
+    val exchangeRatesList by viewModel.exchangeRates.collectAsState()
 
-    val totalSales = invoices.filter { it.status == "saved" && it.type == "sale" }.sumOf { it.total }
-    val totalProfit = invoices.filter { it.status == "saved" && it.type == "sale" }.sumOf { it.profit }
+    val usdDefault by viewModel.rateUSD.collectAsState()
+    val eurDefault by viewModel.rateEUR.collectAsState()
+    val sarDefault by viewModel.rateSAR.collectAsState()
+    val tryDefault by viewModel.rateTRY.collectAsState()
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    var startDate by remember { mutableStateOf(initialStartDate) }
+    var endDate by remember { mutableStateOf(initialEndDate) }
+
+    val filteredInvoices = remember(invoices, startDate, endDate) {
+        invoices.filter {
+            val dateOk = (startDate.isEmpty() || it.date >= startDate) &&
+                         (endDate.isEmpty() || it.date <= endDate)
+            dateOk
+        }
+    }
+
+    val filteredVouchers = remember(vouchers, startDate, endDate) {
+        vouchers.filter {
+            val dateOk = (startDate.isEmpty() || it.date >= startDate) &&
+                         (endDate.isEmpty() || it.date <= endDate)
+            dateOk
+        }
+    }
+
+    val totalSales = remember(filteredInvoices, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
+        filteredInvoices.filter { it.status == "saved" && it.type == "sale" }.sumOf { inv ->
+            val rateDateObj = exchangeRatesList.find { it.date == inv.date }
+            val factor = when (inv.currency) {
+                "USD" -> rateDateObj?.rateUSD ?: usdDefault
+                "EUR" -> rateDateObj?.rateEUR ?: eurDefault
+                "SAR" -> rateDateObj?.rateSAR ?: sarDefault
+                "TRY" -> rateDateObj?.rateTRY ?: tryDefault
+                else -> 1.0
+            }
+            inv.total * factor
+        }
+    }
+
+    val totalProfit = remember(filteredInvoices, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
+        filteredInvoices.filter { it.status == "saved" && it.type == "sale" }.sumOf { inv ->
+            val rateDateObj = exchangeRatesList.find { it.date == inv.date }
+            val factor = when (inv.currency) {
+                "USD" -> rateDateObj?.rateUSD ?: usdDefault
+                "EUR" -> rateDateObj?.rateEUR ?: eurDefault
+                "SAR" -> rateDateObj?.rateSAR ?: sarDefault
+                "TRY" -> rateDateObj?.rateTRY ?: tryDefault
+                else -> 1.0
+            }
+            inv.profit * factor
+        }
+    }
+
+    val totalReceipts = remember(filteredVouchers, accounts, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
+        filteredVouchers.filter { it.type == "receipt" }.sumOf { v ->
+            val acc = accounts.find { it.id == v.accountId }
+            val rateDateObj = exchangeRatesList.find { it.date == v.date }
+            val factor = when (acc?.currency) {
+                "USD" -> rateDateObj?.rateUSD ?: usdDefault
+                "EUR" -> rateDateObj?.rateEUR ?: eurDefault
+                "SAR" -> rateDateObj?.rateSAR ?: sarDefault
+                "TRY" -> rateDateObj?.rateTRY ?: tryDefault
+                else -> 1.0
+            }
+            v.amount * factor
+        }
+    }
+
+    val totalPayments = remember(filteredVouchers, accounts, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
+        filteredVouchers.filter { it.type == "payment" }.sumOf { v ->
+            val acc = accounts.find { it.id == v.accountId }
+            val rateDateObj = exchangeRatesList.find { it.date == v.date }
+            val factor = when (acc?.currency) {
+                "USD" -> rateDateObj?.rateUSD ?: usdDefault
+                "EUR" -> rateDateObj?.rateEUR ?: eurDefault
+                "SAR" -> rateDateObj?.rateSAR ?: sarDefault
+                "TRY" -> rateDateObj?.rateTRY ?: tryDefault
+                else -> 1.0
+            }
+            v.amount * factor
+        }
+    }
+
+    val topProductsList = remember(filteredInvoices, products, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
+        val soldMap = mutableMapOf<String, Int>()
+        val revenueMap = mutableMapOf<String, Double>()
+        filteredInvoices.filter { it.status == "saved" && it.type == "sale" }.forEach { inv ->
+            val rateDateObj = exchangeRatesList.find { it.date == inv.date }
+            val factor = when (inv.currency) {
+                "USD" -> rateDateObj?.rateUSD ?: usdDefault
+                "EUR" -> rateDateObj?.rateEUR ?: eurDefault
+                "SAR" -> rateDateObj?.rateSAR ?: sarDefault
+                "TRY" -> rateDateObj?.rateTRY ?: tryDefault
+                else -> 1.0
+            }
+            try {
+                val items = viewModel.deserializeItems(inv.itemsJson)
+                items.forEach { item ->
+                    soldMap[item.name] = (soldMap[item.name] ?: 0) + item.qty
+                    revenueMap[item.name] = (revenueMap[item.name] ?: 0.0) + (item.qty * item.price * factor)
+                }
+            } catch (e: Exception) {}
+        }
+        products.map { p ->
+            val soldQty = soldMap[p.name] ?: 0
+            val soldRevenue = revenueMap[p.name] ?: 0.0
+            p to (soldQty to soldRevenue)
+        }.sortedByDescending { it.second.first }
+    }
+
+    val topCustomersList = remember(filteredInvoices, filteredVouchers, accounts, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
+        val activityMap = mutableMapOf<String, Double>()
+        filteredInvoices.filter { it.status == "saved" }.forEach { inv ->
+            val matchingAccount = accounts.find { it.name == inv.customer }
+            if (matchingAccount != null) {
+                val rateDateObj = exchangeRatesList.find { it.date == inv.date }
+                val factor = when (inv.currency) {
+                    "USD" -> rateDateObj?.rateUSD ?: usdDefault
+                    "EUR" -> rateDateObj?.rateEUR ?: eurDefault
+                    "SAR" -> rateDateObj?.rateSAR ?: sarDefault
+                    "TRY" -> rateDateObj?.rateTRY ?: tryDefault
+                    else -> 1.0
+                }
+                activityMap[matchingAccount.id] = (activityMap[matchingAccount.id] ?: 0.0) + (inv.total * factor)
+            }
+        }
+        filteredVouchers.forEach { v ->
+            val matchingAccount = accounts.find { it.id == v.accountId }
+            if (matchingAccount != null) {
+                val rateDateObj = exchangeRatesList.find { it.date == v.date }
+                val factor = when (matchingAccount.currency) {
+                    "USD" -> rateDateObj?.rateUSD ?: usdDefault
+                    "EUR" -> rateDateObj?.rateEUR ?: eurDefault
+                    "SAR" -> rateDateObj?.rateSAR ?: sarDefault
+                    "TRY" -> rateDateObj?.rateTRY ?: tryDefault
+                    else -> 1.0
+                }
+                activityMap[v.accountId] = (activityMap[v.accountId] ?: 0.0) + (v.amount * factor)
+            }
+        }
+        val customers = accounts.filter { it.type == "customer" }
+        customers.map { c ->
+            val totalActivityStr = activityMap[c.id] ?: 0.0
+            c to totalActivityStr
+        }.sortedByDescending { it.second }
+    }
 
     val title = when (type) {
         "daily" -> "تقرير الحركة اليومية"
@@ -3723,14 +4270,22 @@ fun ReportDetailsDialog(viewModel: AppViewModel, type: String, onClose: () -> Un
         else -> "المستودع: المواد تحت حد الأمان النقدي"
     }
 
+    val dateRangeText = when {
+        startDate.isNotEmpty() && endDate.isNotEmpty() -> "الفترة: من $startDate إلى $endDate"
+        startDate.isNotEmpty() -> "الفترة: منذ تاريخ $startDate"
+        endDate.isNotEmpty() -> "الفترة: حتى تاريخ $endDate"
+        else -> "الفترة: كافة التواريخ والبيانات"
+    }
+
     Dialog(onDismissRequest = { onClose() }) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.85f),
+                .fillMaxHeight(0.92f),
             shape = RoundedCornerShape(22.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
+                // Header
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(text = title, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
                     IconButton(onClick = onClose) {
@@ -3738,11 +4293,109 @@ fun ReportDetailsDialog(viewModel: AppViewModel, type: String, onClose: () -> Un
                     }
                 }
 
+                Spacer(modifier = Modifier.height(6.dp))
+                HorizontalDivider(color = Color(0xFFE4ECEB))
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Date Filter Section
+                Text(
+                    text = "⚙️ فرز وتحديد الفترة الزمنية للتقرير:",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutlinedTextField(
+                            value = if (startDate.isBlank()) "من تاريخ" else startDate,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("من تاريخ", fontSize = 10.sp) },
+                            textStyle = TextStyle(fontSize = 11.sp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedContainerColor = Color(0xFFF0F5F4),
+                                unfocusedContainerColor = Color(0xFFF0F5F4)
+                            ),
+                            trailingIcon = {
+                                if (startDate.isNotBlank()) {
+                                    IconButton(onClick = { startDate = "" }) {
+                                        Icon(imageVector = Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    }
+                                } else {
+                                    Icon(imageVector = Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable {
+                                    showDatePicker(context) { startDate = it }
+                                }
+                        )
+                    }
+
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutlinedTextField(
+                            value = if (endDate.isBlank()) "إلى تاريخ" else endDate,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("إلى تاريخ", fontSize = 10.sp) },
+                            textStyle = TextStyle(fontSize = 11.sp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedContainerColor = Color(0xFFF0F5F4),
+                                unfocusedContainerColor = Color(0xFFF0F5F4)
+                            ),
+                            trailingIcon = {
+                                if (endDate.isNotBlank()) {
+                                    IconButton(onClick = { endDate = "" }) {
+                                        Icon(imageVector = Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    }
+                                } else {
+                                    Icon(imageVector = Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable {
+                                    showDatePicker(context) { endDate = it }
+                                }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = Color(0xFFE4ECEB))
+                Spacer(modifier = Modifier.height(10.dp))
+
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     when (type) {
                         "daily" -> {
                             Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text(text = "مراجعة اليوم — 23 مايو 2026", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text(
+                                    text = dateRangeText,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Card(modifier = Modifier.weight(1f).padding(4.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAF9))) {
                                         Column(Modifier.padding(8.dp)) {
@@ -3761,14 +4414,14 @@ fun ReportDetailsDialog(viewModel: AppViewModel, type: String, onClose: () -> Un
                                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Card(modifier = Modifier.weight(1f).padding(4.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAF9))) {
                                         Column(Modifier.padding(8.dp)) {
-                                            Text("سندات صرف", fontSize = 11.sp, color = Color.Gray)
-                                            Text(viewModel.formatCurrency(400000.0), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE03C3C))
+                                            Text("سندات صرف مالي", fontSize = 11.sp, color = Color.Gray)
+                                            Text(viewModel.formatCurrency(totalPayments), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE03C3C))
                                         }
                                     }
                                     Card(modifier = Modifier.weight(1f).padding(4.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAF9))) {
                                         Column(Modifier.padding(8.dp)) {
-                                            Text("سندات استلام", fontSize = 11.sp, color = Color.Gray)
-                                            Text(viewModel.formatCurrency(230000.0), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2EBD7A))
+                                            Text("سندات استلام مالي", fontSize = 11.sp, color = Color.Gray)
+                                            Text(viewModel.formatCurrency(totalReceipts), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2EBD7A))
                                         }
                                     }
                                 }
@@ -3777,8 +4430,16 @@ fun ReportDetailsDialog(viewModel: AppViewModel, type: String, onClose: () -> Un
                         "pl" -> {
                             val cogs = totalSales * 0.70 // simulated COGS
                             val grossProfit = totalSales - cogs
-                            val netProfit = grossProfit - 125000.0 // Simulated overhead expense
+                            val dynamicExpenses = if (totalPayments > 0.0) totalPayments else 125000.0
+                            val netProfit = grossProfit - dynamicExpenses
                             Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                                Text(
+                                    text = dateRangeText,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = Color.Gray,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -3788,8 +4449,8 @@ fun ReportDetailsDialog(viewModel: AppViewModel, type: String, onClose: () -> Un
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(text = "صافي ربح الفترة المالي", fontSize = 11.sp, color = Color(0xFF1A9A60), fontWeight = FontWeight.Bold)
-                                        Text(text = "${viewModel.formatCurrency(netProfit)} ل.س", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A9A60))
+                                        Text(text = "صافي ربح الفترة المحدد مسبقاً", fontSize = 11.sp, color = Color(0xFF1A9A60), fontWeight = FontWeight.Bold)
+                                        Text(text = "${viewModel.formatCurrency(netProfit)} ل.س", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A9A60))
                                     }
                                 }
 
@@ -3799,7 +4460,7 @@ fun ReportDetailsDialog(viewModel: AppViewModel, type: String, onClose: () -> Un
                                     Triple("إجمالي المبيعات المحققة", totalSales, Color(0xFF1A9A60)),
                                     Triple("تكلفة البضاعة المباعة (تقديري)", -cogs, Color(0xFFE03C3C)),
                                     Triple("مجمل الربح الإجمالي", grossProfit, Color(0xFF1A9A60)),
-                                    Triple("المصاريف الإدارية والعمومية والتشغيل", -125000.0, Color(0xFFE03C3C)),
+                                    Triple("المصاريف الإدارية أو سندات الصرف للفترة", -dynamicExpenses, Color(0xFFE03C3C)),
                                     Triple("صافي الدخل النهائي للفترة", netProfit, Color(0xFF1A9A60))
                                 )
 
@@ -3844,47 +4505,71 @@ fun ReportDetailsDialog(viewModel: AppViewModel, type: String, onClose: () -> Un
                             }
                         }
                         "topProducts" -> {
-                            LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                itemsIndexed(products) { index, p ->
-                                    Card(modifier = Modifier.fillMaxWidth()) {
-                                        Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(28.dp)
-                                                    .clip(RoundedCornerShape(6.dp))
-                                                    .background(MaterialTheme.colorScheme.primary),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(text = "${index + 1}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            val sortedList = topProductsList.filter { it.second.first > 0 || (startDate.isEmpty() && endDate.isEmpty()) }
+                            if (sortedList.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("لا توجد مبيعات في هذه الفترة المحددة")
+                                }
+                            } else {
+                                LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    itemsIndexed(sortedList) { index, (p, stats) ->
+                                        val (soldQty, soldRevenue) = stats
+                                        Card(modifier = Modifier.fillMaxWidth()) {
+                                            Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(28.dp)
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .background(MaterialTheme.colorScheme.primary),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(text = "${index + 1}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Text(text = p.icon, fontSize = 18.sp)
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(text = p.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                    Text(text = "الكمية المباعة: $soldQty ${p.unit}", fontSize = 11.sp, color = Color.Gray)
+                                                }
+                                                Text(text = "${viewModel.formatCurrency(soldRevenue)} ل.س", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                             }
-                                            Spacer(modifier = Modifier.width(10.dp))
-                                            Text(text = p.icon, fontSize = 18.sp)
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(text = p.name, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                            Text(text = "${viewModel.formatCurrency(p.qty * p.sellPrice)} ل.س", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                         }
                                     }
                                 }
                             }
                         }
                         "topCustomers" -> {
-                            val customers = accounts.filter { it.type == "customer" }
-                            LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                itemsIndexed(customers) { index, c ->
-                                    Card(modifier = Modifier.fillMaxWidth()) {
-                                        Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(28.dp)
-                                                    .clip(RoundedCornerShape(6.dp))
-                                                    .background(Color.Gray),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(text = "${index + 1}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            val activeCustomers = topCustomersList.filter { it.second > 0.0 || (startDate.isEmpty() && endDate.isEmpty()) }
+                            if (activeCustomers.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("لا توجد حركة مالية للعملاء في هذه الفترة")
+                                }
+                            } else {
+                                LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    itemsIndexed(activeCustomers) { index, (c, volume) ->
+                                        Card(modifier = Modifier.fillMaxWidth()) {
+                                            Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(28.dp)
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .background(Color.Gray),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(text = "${index + 1}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(text = c.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                    if (volume > 0.0) {
+                                                        Text(text = "حجم التعامل المحاسبي بالفترة: ${viewModel.formatCurrency(volume)} ${c.currency}", fontSize = 11.sp, color = Color.Gray)
+                                                    } else {
+                                                        Text(text = "لا توجد حركة مالية بالفترة الحالية", fontSize = 11.sp, color = Color.Gray)
+                                                    }
+                                                }
+                                                Text(text = "${viewModel.formatCurrency(Math.abs(c.balance))} ${c.currency}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                             }
-                                            Spacer(modifier = Modifier.width(10.dp))
-                                            Text(text = c.name, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                            Text(text = "${viewModel.formatCurrency(Math.abs(c.balance))} ${c.currency}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                         }
                                     }
                                 }

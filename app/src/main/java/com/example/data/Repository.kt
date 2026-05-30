@@ -12,6 +12,7 @@ class AppRepository(private val appDao: AppDao) {
     val products: Flow<List<Product>> = appDao.getAllProducts()
     val vouchers: Flow<List<Voucher>> = appDao.getAllVouchers()
     val categories: Flow<List<ProductCategory>> = appDao.getAllCategories()
+    val exchangeRates: Flow<List<ExchangeRate>> = appDao.getAllExchangeRates()
 
     suspend fun insertCategory(category: ProductCategory) = withContext(Dispatchers.IO) {
         appDao.insertCategory(category)
@@ -19,6 +20,14 @@ class AppRepository(private val appDao: AppDao) {
 
     suspend fun deleteCategory(category: ProductCategory) = withContext(Dispatchers.IO) {
         appDao.deleteCategory(category)
+    }
+
+    suspend fun insertExchangeRate(rate: ExchangeRate) = withContext(Dispatchers.IO) {
+        appDao.insertExchangeRate(rate)
+    }
+
+    suspend fun getExchangeRateByDate(date: String): ExchangeRate? = withContext(Dispatchers.IO) {
+        appDao.getExchangeRateByDate(date)
     }
 
     suspend fun insertInvoiceRaw(invoice: Invoice) = withContext(Dispatchers.IO) {
@@ -33,35 +42,137 @@ class AppRepository(private val appDao: AppDao) {
         tryRate: Double = 380.0
     ) = withContext(Dispatchers.IO) {
         appDao.insertInvoice(invoice)
-        // Also update the account balance reactively based on invoice type
+        // Also update the account balance reactively based on invoice type and paymentType
         val accountsList = appDao.getAllAccounts().first()
         val account = accountsList.find { it.name == invoice.customer }
         if (account != null) {
-            val balanceDiff = when (invoice.type) {
-                "sale" -> -invoice.total // Debit customer (they owe us more)
-                "purchase" -> invoice.total // Credit supplier (we owe them more)
-                "return", "return_sale" -> invoice.total // Refund/return sale
-                "return_purchase" -> -invoice.total // Refund/return purchase
+            val paymentReduction = when (invoice.paymentType) {
+                "cash" -> invoice.total
+                "credit" -> invoice.paidAmount
                 else -> 0.0
             }
+
+            // Net debt change in invoice currency
+            val netDebtChangeInInvoiceCurrency = when (invoice.type) {
+                "sale" -> - (invoice.total - paymentReduction) // They owe us more (debt increases / balance decreases)
+                "purchase" -> (invoice.total - paymentReduction) // We owe them more (liability increases / balance increases)
+                "return", "return_sale" -> (invoice.total - paymentReduction) // Refund / return sale
+                "return_purchase" -> - (invoice.total - paymentReduction) // Refund / return purchase
+                else -> 0.0
+            }
+
+            // Look up specific date exchange rate if it's stored
+            val historicalRate = appDao.getExchangeRateByDate(invoice.date)
+            val activeUsd = historicalRate?.rateUSD ?: usdRate
+            val activeEur = historicalRate?.rateEUR ?: eurRate
+            val activeSar = historicalRate?.rateSAR ?: sarRate
+            val activeTry = historicalRate?.rateTRY ?: tryRate
+
             val rateFrom = when (invoice.currency) {
-                "USD" -> usdRate
-                "EUR" -> eurRate
-                "SAR" -> sarRate
-                "TRY" -> tryRate
+                "USD" -> activeUsd
+                "EUR" -> activeEur
+                "SAR" -> activeSar
+                "TRY" -> activeTry
                 else -> 1.0
             }
-            val diffInSyp = balanceDiff * rateFrom
+            val diffInSyp = netDebtChangeInInvoiceCurrency * rateFrom
 
             val rateTo = when (account.currency) {
-                "USD" -> usdRate
-                "EUR" -> eurRate
-                "SAR" -> sarRate
-                "TRY" -> tryRate
+                "USD" -> activeUsd
+                "EUR" -> activeEur
+                "SAR" -> activeSar
+                "TRY" -> activeTry
                 else -> 1.0
             }
             val convertedDiff = if (rateTo != 0.0) diffInSyp / rateTo else diffInSyp
             appDao.updateAccountBalance(account.id, account.balance + convertedDiff)
+
+            // Auto-insert corresponding Vouchers so they appear in account statements/logs
+            if (paymentReduction > 0.0 && invoice.status == "saved") {
+                val vType = when (invoice.type) {
+                    "sale" -> "receipt" // سند قبض
+                    "purchase" -> "payment" // سند صرف
+                    "return_sale" -> "payment" // صرف للزبون في المرتجع
+                    "return_purchase" -> "receipt" // قبض من المورد في المرتجع
+                    else -> "receipt"
+                }
+                val vDesc = if (invoice.paymentType == "cash") {
+                    "سداد نقدي تلقائي للفاتورة ${invoice.id}"
+                } else {
+                    "دفعة مسددة للفاتورة الآجلة ${invoice.id}"
+                }
+                val autoVoucher = Voucher(
+                    type = vType,
+                    accountId = account.id,
+                    amount = paymentReduction,
+                    desc = vDesc,
+                    date = invoice.date
+                )
+                appDao.insertVoucher(autoVoucher)
+            }
+        }
+    }
+
+    suspend fun reverseInvoiceBalanceEffects(
+        invoice: Invoice,
+        usdRate: Double = 13700.0,
+        eurRate: Double = 14900.0,
+        sarRate: Double = 3650.0,
+        tryRate: Double = 380.0
+    ) = withContext(Dispatchers.IO) {
+        val accountsList = appDao.getAllAccounts().first()
+        val account = accountsList.find { it.name == invoice.customer }
+        if (account != null) {
+            val paymentReduction = when (invoice.paymentType) {
+                "cash" -> invoice.total
+                "credit" -> invoice.paidAmount
+                else -> 0.0
+            }
+
+            // Reverse the debt change
+            val netDebtChangeInInvoiceCurrency = when (invoice.type) {
+                "sale" -> - (invoice.total - paymentReduction)
+                "purchase" -> (invoice.total - paymentReduction)
+                "return", "return_sale" -> (invoice.total - paymentReduction)
+                "return_purchase" -> - (invoice.total - paymentReduction)
+                else -> 0.0
+            }
+
+            // To reverse we subtract (change sign)
+            val reversedNetDebt = - netDebtChangeInInvoiceCurrency
+
+            val historicalRate = appDao.getExchangeRateByDate(invoice.date)
+            val activeUsd = historicalRate?.rateUSD ?: usdRate
+            val activeEur = historicalRate?.rateEUR ?: eurRate
+            val activeSar = historicalRate?.rateSAR ?: sarRate
+            val activeTry = historicalRate?.rateTRY ?: tryRate
+
+            val rateFrom = when (invoice.currency) {
+                "USD" -> activeUsd
+                "EUR" -> activeEur
+                "SAR" -> activeSar
+                "TRY" -> activeTry
+                else -> 1.0
+            }
+            val diffInSyp = reversedNetDebt * rateFrom
+
+            val rateTo = when (account.currency) {
+                "USD" -> activeUsd
+                "EUR" -> activeEur
+                "SAR" -> activeSar
+                "TRY" -> activeTry
+                else -> 1.0
+            }
+            val convertedDiff = if (rateTo != 0.0) diffInSyp / rateTo else diffInSyp
+            appDao.updateAccountBalance(account.id, account.balance + convertedDiff)
+
+            // Also delete all automatic vouchers generated with this invoice ID
+            val vouchersList = appDao.getAllVouchers().first()
+            vouchersList.forEach { v ->
+                if (v.accountId == account.id && v.desc.contains(invoice.id)) {
+                    appDao.deleteVoucher(v)
+                }
+            }
         }
     }
 
@@ -118,11 +229,23 @@ class AppRepository(private val appDao: AppDao) {
         appDao.deleteAllProducts()
         appDao.deleteAllVouchers()
         appDao.deleteAllCategories()
+        appDao.deleteAllExchangeRates()
     }
 
     suspend fun loadCustomSeedData() = withContext(Dispatchers.IO) {
         // Force-seed even if data exists
         appDao.deleteAllCategories()
+        appDao.deleteAllExchangeRates()
+
+        val seedRates = listOf(
+            ExchangeRate("2026-05-20", 13500.0, 14700.0, 3600.0, 370.0),
+            ExchangeRate("2026-05-21", 13600.0, 14800.0, 3620.0, 375.0),
+            ExchangeRate("2026-05-22", 13650.0, 14850.0, 3640.0, 378.0),
+            ExchangeRate("2026-05-23", 13700.0, 14900.0, 3650.0, 380.0),
+            ExchangeRate("2026-05-24", 13700.0, 14900.0, 3650.0, 380.0)
+        )
+        seedRates.forEach { appDao.insertExchangeRate(it) }
+
         val seedCategories = listOf(
             ProductCategory("other", "أخرى", "📦"),
             ProductCategory("food", "غذاء", "🍬"),

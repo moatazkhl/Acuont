@@ -331,6 +331,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val rateSAR = MutableStateFlow(3650.0)
     val rateTRY = MutableStateFlow(380.0)
 
+    val exchangeRates: StateFlow<List<ExchangeRate>> = repository.exchangeRates.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    fun saveExchangeRateForDate(date: String, rateUSD: Double, rateEUR: Double, rateSAR: Double, rateTRY: Double) {
+        viewModelScope.launch {
+            repository.insertExchangeRate(
+                ExchangeRate(
+                    date = date,
+                    rateUSD = rateUSD,
+                    rateEUR = rateEUR,
+                    rateSAR = rateSAR,
+                    rateTRY = rateTRY
+                )
+            )
+            triggerToast("تم حفظ أسعار الصرف لتاريخ $date بنجاح ✓")
+        }
+    }
+
     // --- Active Document Creation States ---
     // New Invoice Form State
     val tempInvoiceItems = MutableStateFlow<List<InvoiceItem>>(emptyList())
@@ -339,6 +360,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val invoiceNotes = MutableStateFlow("")
     val invoiceCurrency = MutableStateFlow("ل.س")
     val invoiceType = MutableStateFlow("sale")
+    val invoicePaymentType = MutableStateFlow("cash") // "cash" (نقدي), "credit" (آجل)
+    val invoicePaidAmount = MutableStateFlow("")
+    val editingInvoice = MutableStateFlow<Invoice?>(null)
+
+    fun loadInvoiceForEditing(invoice: Invoice) {
+        editingInvoice.value = invoice
+        invoiceType.value = invoice.type
+        selectedInvoiceCustomer.value = accounts.value.find { it.name == invoice.customer }
+        selectedInvoiceDate.value = invoice.date
+        invoiceNotes.value = invoice.notes
+        invoiceCurrency.value = invoice.currency
+        invoicePaymentType.value = invoice.paymentType
+        invoicePaidAmount.value = if (invoice.paidAmount > 0.0) invoice.paidAmount.toInt().toString() else ""
+        tempInvoiceItems.value = deserializeItems(invoice.itemsJson)
+    }
+
+    fun clearInvoiceForm() {
+        editingInvoice.value = null
+        tempInvoiceItems.value = emptyList()
+        selectedInvoiceCustomer.value = null
+        selectedInvoiceDate.value = "2026-05-30" // Default current local date
+        invoiceNotes.value = ""
+        invoiceCurrency.value = "ل.س"
+        invoiceType.value = "sale"
+        invoicePaymentType.value = "cash"
+        invoicePaidAmount.value = ""
+    }
 
     // New Product Form State
     val editingProduct = MutableStateFlow<Product?>(null)
@@ -698,12 +746,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
         val total = items.sumOf { it.qty * it.price }
         val profit = items.sumOf { it.qty * (it.price - it.cost) }
-        val dateVal = selectedInvoiceDate.value.ifBlank { "2026-05-23" }
+        val dateVal = selectedInvoiceDate.value.ifBlank { "2026-05-30" }
 
         val invStr = serializeItems(items)
 
+        val isEdit = editingInvoice.value != null
+        val newInvoiceId = editingInvoice.value?.id ?: ("INV-" + System.currentTimeMillis().toString().takeLast(5))
+
         val newInvoice = Invoice(
-            id = "INV-" + System.currentTimeMillis().toString().takeLast(5),
+            id = newInvoiceId,
             type = invoiceType.value,
             customer = cust.name,
             date = dateVal,
@@ -712,10 +763,45 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             status = status,
             notes = invoiceNotes.value,
             itemsJson = invStr,
-            currency = invoiceCurrency.value
+            currency = invoiceCurrency.value,
+            paymentType = invoicePaymentType.value,
+            paidAmount = invoicePaidAmount.value.toDoubleOrNull() ?: 0.0
         )
 
         viewModelScope.launch {
+            // If editing, first reverse the OLD invoice
+            val oldInv = editingInvoice.value
+            if (oldInv != null) {
+                // Reverse old product quantities
+                if (oldInv.status == "saved") {
+                    val oldItems = deserializeItems(oldInv.itemsJson)
+                    products.value.forEach { product ->
+                        val matchedItem = oldItems.find { it.name == product.name }
+                        if (matchedItem != null) {
+                            val restoredQty = when (oldInv.type) {
+                                "sale" -> product.qty + matchedItem.qty
+                                "purchase" -> maxOf(0, product.qty - matchedItem.qty)
+                                "return_sale" -> maxOf(0, product.qty - matchedItem.qty)
+                                "return_purchase" -> product.qty + matchedItem.qty
+                                else -> product.qty + matchedItem.qty
+                            }
+                            repository.updateProductQuantity(product.id, restoredQty)
+                        }
+                    }
+                    // Reverse account balance and delete matching automatic vouchers
+                    repository.reverseInvoiceBalanceEffects(
+                        oldInv,
+                        usdRate = rateUSD.value,
+                        eurRate = rateEUR.value,
+                        sarRate = rateSAR.value,
+                        tryRate = rateTRY.value
+                    )
+                }
+                // Delete the old invoice itself
+                repository.deleteInvoiceById(oldInv.id)
+            }
+
+            // Insert new / updated invoice
             if (status == "saved") {
                 repository.insertInvoice(
                     newInvoice,
@@ -743,12 +829,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            tempInvoiceItems.value = emptyList()
-            selectedInvoiceCustomer.value = null
-            invoiceNotes.value = ""
-            invoiceCurrency.value = "ل.س"
-            invoiceType.value = "sale"
-            triggerToast(if (status == "draft") "تم حفظ المسودة" else "تمت الفاتورة والطباعة ✓")
+            clearInvoiceForm()
+            triggerToast(if (isEdit) "تم تعديل وحفظ الفاتورة بنجاح ✓" else if (status == "draft") "تم حفظ المسودة" else "تمت الفاتورة والطباعة ✓")
         }
     }
 
@@ -808,24 +890,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 // Reverse account balance adjustment with cross-currency conversion
-                val accList = accounts.value
-                val acc = accList.find { it.name == invoice.customer }
-                if (acc != null) {
-                    val rawReversedDiff = when (invoice.type) {
-                        "sale" -> invoice.total
-                        "purchase" -> -invoice.total
-                        "return", "return_sale" -> -invoice.total
-                        "return_purchase" -> invoice.total
-                        else -> 0.0
-                    }
-                    val rateFrom = getRateInSyp(invoice.currency)
-                    val diffInSyp = rawReversedDiff * rateFrom
-                    val rateTo = getRateInSyp(acc.currency)
-                    val reversedDiff = if (rateTo != 0.0) diffInSyp / rateTo else diffInSyp
-                    repository.updateAccountBalance(acc.id, acc.balance + reversedDiff)
-                }
+                repository.reverseInvoiceBalanceEffects(
+                    invoice,
+                    usdRate = rateUSD.value,
+                    eurRate = rateEUR.value,
+                    sarRate = rateSAR.value,
+                    tryRate = rateTRY.value
+                )
             }
-            triggerToast("تم حذف الفاتورة")
+            triggerToast("تم حذف الفاتورة بنجاح ✓")
         }
     }
 

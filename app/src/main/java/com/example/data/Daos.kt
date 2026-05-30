@@ -77,6 +77,22 @@ interface AppDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertVoucher(voucher: Voucher)
 
+    @Delete
+    suspend fun deleteVoucher(voucher: Voucher)
+
     @Query("DELETE FROM vouchers")
     suspend fun deleteAllVouchers()
+
+    // Exchange Rates
+    @Query("SELECT * FROM exchange_rates ORDER BY date DESC")
+    fun getAllExchangeRates(): Flow<List<ExchangeRate>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertExchangeRate(rate: ExchangeRate)
+
+    @Query("SELECT * FROM exchange_rates WHERE date = :date LIMIT 1")
+    suspend fun getExchangeRateByDate(date: String): ExchangeRate?
+
+    @Query("DELETE FROM exchange_rates")
+    suspend fun deleteAllExchangeRates()
 }
