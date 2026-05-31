@@ -67,6 +67,10 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.compose.ui.platform.LocalLifecycleOwner
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        var tempWebViewForPrinting: android.webkit.WebView? = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -124,6 +128,7 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
 
     var isManageCategoriesOpen by remember { mutableStateOf(false) }
     var activePreviewInvoice by remember { mutableStateOf<Invoice?>(null) }
+    var activePreviewVoucher by remember { mutableStateOf<Voucher?>(null) }
 
     // Toast listener from ViewModel flows
     LaunchedEffect(Unit) {
@@ -478,6 +483,14 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
             )
         }
 
+        activePreviewVoucher?.let { v: Voucher ->
+            VoucherPreviewDialog(
+                voucher = v,
+                viewModel = viewModel,
+                onClose = { activePreviewVoucher = null }
+            )
+        }
+
         if (isNewAccountOpen) {
             NewAccountDialog(viewModel = viewModel, onClose = { 
                 isNewAccountOpen = false
@@ -526,6 +539,12 @@ fun SmartAccountantApp(viewModel: AppViewModel, modifier: Modifier = Modifier) {
                     viewModel.voucherType.value = type
                     viewModel.voucherSelectedAccount.value = selectedStatementAccount
                     isNewVoucherOpen = true
+                },
+                onViewInvoice = { inv ->
+                    activePreviewInvoice = inv
+                },
+                onViewVoucher = { v ->
+                    activePreviewVoucher = v
                 }
             )
         }
@@ -572,13 +591,13 @@ fun InvoicesTabScreen(
     val filter by viewModel.invoiceFilter.collectAsState()
     val search by viewModel.invoiceSearch.collectAsState()
 
-    // Simple today calculation matching the web application
-    val todayInvs = invoices.filter { it.date == "2026-05-23" && it.type == "sale" }
-    val salesVal = todayInvs.sumOf { it.total }
-    val profitVal = todayInvs.sumOf { it.profit }
+    // Calculate total sales and profits dynamically for all sale invoices to ensure accuracy even after clearing database
+    val saleInvs = invoices.filter { it.type == "sale" }
+    val salesVal = saleInvs.sumOf { it.total }
+    val profitVal = saleInvs.sumOf { it.profit }
 
     Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
-        // Today quick stats cards
+        // Dynamic quick stats cards for sales
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Card(
                 modifier = Modifier.weight(1f),
@@ -586,7 +605,7 @@ fun InvoicesTabScreen(
                 border = BorderStroke(1.dp, Color(0xFFD0DEDD))
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
-                    Text(text = "مبيعات اليوم", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.Gray)
+                    Text(text = "مجموع المبيعات", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.Gray)
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(text = viewModel.formatCurrency(salesVal), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     Text(text = "ل.س", fontSize = 10.sp, color = Color.Gray)
@@ -598,7 +617,7 @@ fun InvoicesTabScreen(
                 border = BorderStroke(1.dp, Color(0xFFD0DEDD))
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
-                    Text(text = "أرباح اليوم المتوقعة", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.Gray)
+                    Text(text = "إجمالي الأرباح المتوقعة", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.Gray)
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(text = viewModel.formatCurrency(profitVal), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2EBD7A))
                     Text(text = "ل.س", fontSize = 10.sp, color = Color.Gray)
@@ -683,14 +702,24 @@ fun InvoicesTabScreen(
             val groupedByDate = filteredInvoices.groupBy { it.date }
             val sortedDates = groupedByDate.keys.sortedDescending()
 
+            val todayStr = viewModel.getTodayDateStr()
+            val yesterdayStr = try {
+                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                val cal = java.util.Calendar.getInstance()
+                cal.add(java.util.Calendar.DATE, -1)
+                sdf.format(cal.time)
+            } catch (e: Exception) {
+                "2026-05-30"
+            }
+
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 sortedDates.forEach { date ->
                     val label = when (date) {
-                        "2026-05-23" -> "اليوم"
-                        "2026-05-22" -> "أمس"
+                        todayStr -> "اليوم"
+                        yesterdayStr -> "أمس"
                         else -> date
                     }
                     item {
@@ -1426,18 +1455,20 @@ fun ReportsTabScreen(
     val sarDefault by viewModel.rateSAR.collectAsState()
     val tryDefault by viewModel.rateTRY.collectAsState()
 
-    // 1. Filtered raw transactions based on selected date ranges
+    // 1. Filtered raw transactions based on selected date ranges (using cleanDateStr for safe comparison with time-part dates)
     val filteredInvoices = remember(invoices, startDate, endDate) {
         invoices.filter {
-            (startDate.isEmpty() || it.date >= startDate) &&
-            (endDate.isEmpty() || it.date <= endDate)
+            val cleanDate = cleanDateStr(it.date)
+            (startDate.isEmpty() || cleanDate >= startDate) &&
+            (endDate.isEmpty() || cleanDate <= endDate)
         }
     }
 
     val filteredVouchers = remember(vouchers, startDate, endDate) {
         vouchers.filter {
-            (startDate.isEmpty() || it.date >= startDate) &&
-            (endDate.isEmpty() || it.date <= endDate)
+            val cleanDate = cleanDateStr(it.date)
+            (startDate.isEmpty() || cleanDate >= startDate) &&
+            (endDate.isEmpty() || cleanDate <= endDate)
         }
     }
 
@@ -4261,16 +4292,18 @@ fun ReportDetailsDialog(
 
     val filteredInvoices = remember(invoices, startDate, endDate) {
         invoices.filter {
-            val dateOk = (startDate.isEmpty() || it.date >= startDate) &&
-                         (endDate.isEmpty() || it.date <= endDate)
+            val cleanDate = cleanDateStr(it.date)
+            val dateOk = (startDate.isEmpty() || cleanDate >= startDate) &&
+                         (endDate.isEmpty() || cleanDate <= endDate)
             dateOk
         }
     }
 
     val filteredVouchers = remember(vouchers, startDate, endDate) {
         vouchers.filter {
-            val dateOk = (startDate.isEmpty() || it.date >= startDate) &&
-                         (endDate.isEmpty() || it.date <= endDate)
+            val cleanDate = cleanDateStr(it.date)
+            val dateOk = (startDate.isEmpty() || cleanDate >= startDate) &&
+                         (endDate.isEmpty() || cleanDate <= endDate)
             dateOk
         }
     }
@@ -4817,12 +4850,41 @@ data class LedgerRow(
     val date: String,
     val desc: String,
     val amount: Double,
-    val runningBalance: Double
+    val runningBalance: Double,
+    val sourceId: String? = null,
+    val sourceType: String? = null // "invoice" or "voucher"
 )
+
+data class TempTx(
+    val date: String,
+    val desc: String,
+    val amount: Double,
+    val sourceId: String,
+    val sourceType: String // "invoice" or "voucher"
+)
+
+fun cleanDateStr(date: String): String {
+    val trimmed = date.trim()
+    return if (trimmed.length >= 10) trimmed.substring(0, 10) else trimmed
+}
+
+fun escapeCsvCell(value: Any?): String {
+    if (value == null) return ""
+    val str = value.toString().trim()
+    val escaped = str.replace("\"", "\"\"")
+    return "\"$escaped\""
+}
 
 // --- Account Statement (كشف الحساب المحاسبي) dialog ---
 @Composable
-fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: () -> Unit, onAddVoucher: (String) -> Unit) {
+fun AccountStatementDialog(
+    viewModel: AppViewModel,
+    account: Account,
+    onClose: () -> Unit,
+    onAddVoucher: (String) -> Unit,
+    onViewInvoice: (Invoice) -> Unit,
+    onViewVoucher: (Voucher) -> Unit
+) {
     val invoices by viewModel.invoices.collectAsState()
     val vouchers by viewModel.vouchers.collectAsState()
     val exchangeRatesList by viewModel.exchangeRates.collectAsState()
@@ -4833,7 +4895,7 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
 
     val accountVouchers = vouchers.filter { it.accountId == account.id }
     // Only include saved/posted invoices (ignore drafts)
-    val accountInvs = invoices.filter { it.customer == account.name && it.status == "saved" }
+    val accountInvs = invoices.filter { it.customer.trim() == account.name.trim() && it.status == "saved" }
 
     var startDate by remember { mutableStateOf("") }
     var endDate by remember { mutableStateOf("") }
@@ -4880,45 +4942,64 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
             val sypAmount = rawInvoiceVal * rateFrom
             val amountInAccountCurrency = if (rateTo != 0.0) sypAmount / rateTo else sypAmount
 
-            Triple(inv.date, invoiceName, amountInAccountCurrency)
+            TempTx(
+                date = inv.date,
+                desc = invoiceName,
+                amount = amountInAccountCurrency,
+                sourceId = inv.id,
+                sourceType = "invoice"
+            )
         } +
         accountVouchers.map { v ->
             val prefixText = if (v.desc.isBlank()) {
                 if (v.type == "receipt") "سند قبض نقدي رقم ${v.id}" else "سند صرف نقدي رقم ${v.id}"
             } else v.desc
-            Triple(v.date, prefixText, if (v.type == "receipt") v.amount else -v.amount)
+            TempTx(
+                date = v.date,
+                desc = prefixText,
+                amount = if (v.type == "receipt") v.amount else -v.amount,
+                sourceId = v.id.toString(),
+                sourceType = "voucher"
+            )
         }
         )
     }
 
     val chronologicalTx = remember(allTx) {
-        allTx.sortedWith(compareBy<Triple<String, String, Double>> { it.first }.thenBy { it.second })
+        allTx.sortedWith(compareBy<TempTx> { cleanDateStr(it.date) }.thenBy { it.desc })
     }
 
     val txWithRunningBalance = remember(chronologicalTx) {
         var currentRunning = 0.0
         chronologicalTx.map { tx ->
-            currentRunning += tx.third
+            currentRunning += tx.amount
             LedgerRow(
-                date = tx.first,
-                desc = tx.second,
-                amount = tx.third,
-                runningBalance = currentRunning
+                date = tx.date,
+                desc = tx.desc,
+                amount = tx.amount,
+                runningBalance = currentRunning,
+                sourceId = tx.sourceId,
+                sourceType = tx.sourceType
             )
         }
     }
 
     val filteredTx = remember(txWithRunningBalance, startDate, endDate) {
-        txWithRunningBalance.filter { tx ->
-            val afterStart = if (startDate.isBlank()) true else tx.date >= startDate
-            val beforeEnd = if (endDate.isBlank()) true else tx.date <= endDate
+        val sDate = startDate.trim()
+        val eDate = endDate.trim()
+        val list = txWithRunningBalance.filter { tx ->
+            val cleanTxDate = cleanDateStr(tx.date)
+            val afterStart = if (sDate.isBlank()) true else cleanTxDate >= sDate
+            val beforeEnd = if (eDate.isBlank()) true else cleanTxDate <= eDate
             afterStart && beforeEnd
-        }.sortedByDescending { it.date }
+        }
+        list.sortedByDescending { cleanDateStr(it.date) }
     }
 
     val previousBalance = remember(chronologicalTx, startDate) {
-        if (startDate.isBlank()) 0.0
-        else chronologicalTx.filter { it.first < startDate }.sumOf { it.third }
+        val sDate = startDate.trim()
+        if (sDate.isBlank()) 0.0
+        else chronologicalTx.filter { cleanDateStr(it.date) < sDate }.sumOf { it.amount }
     }
 
     val periodNet = remember(filteredTx) {
@@ -5062,13 +5143,42 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
                         LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(filteredTx) { tx ->
                                 Card(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            if (tx.sourceType == "invoice") {
+                                                val matchedInv = invoices.find { it.id == tx.sourceId }
+                                                if (matchedInv != null) {
+                                                    onViewInvoice(matchedInv)
+                                                } else {
+                                                    viewModel.triggerToast("لم يتم العثور على تفاصيل الفاتورة")
+                                                }
+                                            } else if (tx.sourceType == "voucher") {
+                                                val matchedV = vouchers.find { it.id.toString() == tx.sourceId }
+                                                if (matchedV != null) {
+                                                    onViewVoucher(matchedV)
+                                                } else {
+                                                    viewModel.triggerToast("لم يتم العثور على تفاصيل السند المحاسبي")
+                                                }
+                                            }
+                                        },
                                     colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAF9)),
                                     border = BorderStroke(1.dp, Color(0xFFD0DEDD))
                                 ) {
                                     Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(text = tx.desc, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(text = tx.desc, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                Icon(
+                                                    imageVector = if (tx.sourceType == "invoice") Icons.Default.Search else Icons.Default.Info,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(13.dp),
+                                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                                )
+                                            }
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -5282,6 +5392,7 @@ fun printAccountStatement(
     val act = findActivity(context)
     act?.runOnUiThread {
         val webView = android.webkit.WebView(act)
+        MainActivity.tempWebViewForPrinting = webView
         webView.webViewClient = object : android.webkit.WebViewClient() {
             override fun onPageFinished(view: android.webkit.WebView, url: String) {
                 val printManager = act.getSystemService(android.content.Context.PRINT_SERVICE) as android.print.PrintManager
@@ -5308,23 +5419,22 @@ fun exportAccountStatementToExcel(
     val csvContent = StringBuilder()
     // Unicode UTF-8 Byte Order Mark (BOM) to correctly display Arabic in Microsoft Excel!
     csvContent.append('\ufeff')
-    csvContent.append("sep=,\n") // Force Excel separator detection
-    csvContent.append("كشف حساب مالي تفصيلي\n")
-    csvContent.append("اسم الحساب,${account.name}\n")
-    csvContent.append("رقم الهاتف,${account.phone}\n")
-    csvContent.append("العنوان,${account.address}\n")
-    csvContent.append("نوع الحساب,${account.type}\n")
-    csvContent.append("الفترة,من ${startDate.ifBlank { "البداية" }} إلى ${endDate.ifBlank { "اليوم" }}\n")
-    csvContent.append("الرصيد الافتتاحي قبل الفترة,${previousBalance} ${account.currency}\n")
-    csvContent.append("صافي حركة الفترة,${periodNet} ${account.currency}\n")
-    csvContent.append("الرصيد الختامي للفترة,${periodClosing} ${account.currency}\n")
+    csvContent.append("${escapeCsvCell("كشف حساب مالي تفصيلي")}\n")
+    csvContent.append("${escapeCsvCell("اسم الحساب")},${escapeCsvCell(account.name)}\n")
+    csvContent.append("${escapeCsvCell("رقم الهاتف")},${escapeCsvCell(account.phone)}\n")
+    csvContent.append("${escapeCsvCell("العنوان")},${escapeCsvCell(account.address)}\n")
+    csvContent.append("${escapeCsvCell("نوع الحساب")},${escapeCsvCell(account.type)}\n")
+    csvContent.append("${escapeCsvCell("الفترة")},${escapeCsvCell("من ${startDate.ifBlank { "البداية" }} إلى ${endDate.ifBlank { "اليوم" }}")}\n")
+    csvContent.append("${escapeCsvCell("الرصيد الافتتاحي قبل الفترة")},${escapeCsvCell("${previousBalance} ${account.currency}")}\n")
+    csvContent.append("${escapeCsvCell("صافي حركة الفترة")},${escapeCsvCell("${periodNet} ${account.currency}")}\n")
+    csvContent.append("${escapeCsvCell("الرصيد الختامي للفترة")},${escapeCsvCell("${periodClosing} ${account.currency}")}\n")
     csvContent.append("\n")
-    csvContent.append("التاريخ,البيان,المبلغ,الرصيد الجاري,العملة\n")
+    csvContent.append("${escapeCsvCell("التاريخ")},${escapeCsvCell("البيان")},${escapeCsvCell("المبلغ")},${escapeCsvCell("الرصيد الجاري")},${escapeCsvCell("العملة")}\n")
     
     txList.forEach { tx ->
         val amt = tx.amount
         val amtStr = "${if (amt >= 0) "+" else ""}$amt"
-        csvContent.append("${tx.date},${tx.desc},$amtStr,${tx.runningBalance},${account.currency}\n")
+        csvContent.append("${escapeCsvCell(tx.date)},${escapeCsvCell(tx.desc)},${escapeCsvCell(amtStr)},${escapeCsvCell(tx.runningBalance)},${escapeCsvCell(account.currency)}\n")
     }
     
     val fileName = "statement_${account.id}_${System.currentTimeMillis()}.csv"
@@ -5640,6 +5750,7 @@ fun printReport(
     val act = findActivity(context)
     act?.runOnUiThread {
         val webView = android.webkit.WebView(act)
+        MainActivity.tempWebViewForPrinting = webView
         webView.webViewClient = object : android.webkit.WebViewClient() {
             override fun onPageFinished(view: android.webkit.WebView, url: String) {
                 val printManager = act.getSystemService(android.content.Context.PRINT_SERVICE) as android.print.PrintManager
@@ -5675,21 +5786,21 @@ fun exportReportToExcel(
     val csvContent = StringBuilder()
     csvContent.append('\ufeff')
     csvContent.append("sep=,\n") // Force Excel separator detection
-    csvContent.append("تقرير الذكي - $companyName\n")
-    csvContent.append("نوع التقرير,$title\n")
-    csvContent.append("الفترة,من ${startDate.ifBlank { "البداية" }} إلى ${endDate.ifBlank { "اليوم" }}\n")
-    csvContent.append("تاريخ التصدير,2026-05-31\n\n")
+    csvContent.append("${escapeCsvCell("تقرير الذكي - $companyName")}\n")
+    csvContent.append("${escapeCsvCell("نوع التقرير")},${escapeCsvCell(title)}\n")
+    csvContent.append("${escapeCsvCell("الفترة")},${escapeCsvCell("من ${startDate.ifBlank { "البداية" }} إلى ${endDate.ifBlank { "اليوم" }}")}\n")
+    csvContent.append("${escapeCsvCell("تاريخ التصدير")},${escapeCsvCell("2026-05-31")}\n\n")
 
     when (type) {
         "daily" -> {
-            csvContent.append("ملخص حركات الفترة\n")
-            csvContent.append("إجمالي المبيعات المحققة ل.س,$totalSales\n")
-            csvContent.append("أرباح المبيعات ل.س,$totalProfit\n")
-            csvContent.append("المقبوضات الإجمالية ل.س,$totalReceipts\n")
-            csvContent.append("المدفوعات الإجمالية ل.س,$totalPayments\n\n")
+            csvContent.append("${escapeCsvCell("ملخص حركات الفترة")}\n")
+            csvContent.append("${escapeCsvCell("إجمالي المبيعات المحققة ل.س")},${escapeCsvCell(totalSales)}\n")
+            csvContent.append("${escapeCsvCell("أرباح المبيعات ل.س")},${escapeCsvCell(totalProfit)}\n")
+            csvContent.append("${escapeCsvCell("المقبوضات الإجمالية ل.س")},${escapeCsvCell(totalReceipts)}\n")
+            csvContent.append("${escapeCsvCell("المدفوعات الإجمالية ل.س")},${escapeCsvCell(totalPayments)}\n\n")
 
-            csvContent.append("فواتير المبيعات والمرتجع\n")
-            csvContent.append("رقم الفاتورة,التاريخ,الحساب والعميل,النوع,القيمة,العملة,الحالة\n")
+            csvContent.append("${escapeCsvCell("فواتير المبيعات والمرتجع")}\n")
+            csvContent.append("${escapeCsvCell("رقم الفاتورة")},${escapeCsvCell("التاريخ")},${escapeCsvCell("الحساب والعميل")},${escapeCsvCell("النوع")},${escapeCsvCell("القيمة")},${escapeCsvCell("العملة")},${escapeCsvCell("الحالة")}\n")
             filteredInvoices.forEach { inv ->
                 val typeStr = when(inv.type) {
                     "sale" -> "مبيعات"
@@ -5698,14 +5809,14 @@ fun exportReportToExcel(
                     "return_purchase" -> "مرتجع مشتريات"
                     else -> inv.type
                 }
-                csvContent.append("${inv.id},${inv.date},${inv.customer},$typeStr,${inv.total},${inv.currency},${if (inv.status == "saved") "محفوظة" else "مسودة"}\n")
+                csvContent.append("${escapeCsvCell(inv.id)},${escapeCsvCell(inv.date)},${escapeCsvCell(inv.customer)},${escapeCsvCell(typeStr)},${escapeCsvCell(inv.total)},${escapeCsvCell(inv.currency)},${escapeCsvCell(if (inv.status == "saved") "محفوظة" else "مسودة")}\n")
             }
-            csvContent.append("\nسندات القبض والصرف\n")
-            csvContent.append("رقم السند,التاريخ,الحساب,النوع,القيمة,البيان\n")
+            csvContent.append("\n${escapeCsvCell("سندات القبض والصرف")}\n")
+            csvContent.append("${escapeCsvCell("رقم السند")},${escapeCsvCell("التاريخ")},${escapeCsvCell("الحساب")},${escapeCsvCell("النوع")},${escapeCsvCell("القيمة")},${escapeCsvCell("البيان")}\n")
             filteredVouchers.forEach { v ->
                 val acc = accounts.find { it.id == v.accountId }?.name ?: "غير معروف"
                 val typeStr = if (v.type == "receipt") "قبض" else "صرف"
-                csvContent.append("${v.id},${v.date},$acc,$typeStr,${v.amount},${v.desc}\n")
+                csvContent.append("${escapeCsvCell(v.id)},${escapeCsvCell(v.date)},${escapeCsvCell(acc)},${escapeCsvCell(typeStr)},${escapeCsvCell(v.amount)},${escapeCsvCell(v.desc)}\n")
             }
         }
         "pl" -> {
@@ -5714,29 +5825,29 @@ fun exportReportToExcel(
             val dynamicExpenses = totalExpenses
             val netProfit = grossProfit - dynamicExpenses
 
-            csvContent.append("البند المحاسبي,القيمة ل.س\n")
-            csvContent.append("إجمالي المبيعات المحققة,$totalSales\n")
-            csvContent.append("تكلفة البضاعة المباعة,-$cogs\n")
-            csvContent.append("مجمل الربح الإجمالي,$grossProfit\n")
-            csvContent.append("المصاريف التشغيلية الفعلية,-$dynamicExpenses\n")
-            csvContent.append("صافي الدخل النهائي للفترة,$netProfit\n")
+            csvContent.append("${escapeCsvCell("البند المحاسبي")},${escapeCsvCell("القيمة ل.س")}\n")
+            csvContent.append("${escapeCsvCell("إجمالي المبيعات المحققة")},${escapeCsvCell(totalSales)}\n")
+            csvContent.append("${escapeCsvCell("تكلفة البضاعة المباعة")},${escapeCsvCell("-$cogs")}\n")
+            csvContent.append("${escapeCsvCell("مجمل الربح الإجمالي")},${escapeCsvCell(grossProfit)}\n")
+            csvContent.append("${escapeCsvCell("المصاريف التشغيلية الفعلية")},${escapeCsvCell("-$dynamicExpenses")}\n")
+            csvContent.append("${escapeCsvCell("صافي الدخل النهائي للفترة")},${escapeCsvCell(netProfit)}\n")
         }
         "topProducts" -> {
-            csvContent.append("الترتيب,المادة,الكمية المباعة,الإيرادات المحققة ل.س\n")
+            csvContent.append("${escapeCsvCell("الترتيب")},${escapeCsvCell("المادة")},${escapeCsvCell("الكمية المباعة")},${escapeCsvCell("الإيرادات المحققة ل.س")}\n")
             topProductsList.filter { it.second.first > 0 || (startDate.isEmpty() && endDate.isEmpty()) }.forEachIndexed { idx, item ->
-                csvContent.append("${idx + 1},${item.first.name},${item.second.first},${item.second.second}\n")
+                csvContent.append("${escapeCsvCell(idx + 1)},${escapeCsvCell(item.first.name)},${escapeCsvCell(item.second.first)},${escapeCsvCell(item.second.second)}\n")
             }
         }
         "topCustomers" -> {
-            csvContent.append("الترتيب,العميل,حجم التعامل بالفترة,الرصيد الحالي,العملة\n")
+            csvContent.append("${escapeCsvCell("الترتيب")},${escapeCsvCell("العميل")},${escapeCsvCell("حجم التعامل بالفترة")},${escapeCsvCell("الرصيد الحالي")},${escapeCsvCell("العملة")}\n")
             topCustomersList.filter { it.second > 0.0 || (startDate.isEmpty() && endDate.isEmpty()) }.forEachIndexed { idx, item ->
-                csvContent.append("${idx + 1},${item.first.name},${item.second},${item.first.balance},${item.first.currency}\n")
+                csvContent.append("${escapeCsvCell(idx + 1)},${escapeCsvCell(item.first.name)},${escapeCsvCell(item.second)},${escapeCsvCell(item.first.balance)},${escapeCsvCell(item.first.currency)}\n")
             }
         }
         "lowStock" -> {
-            csvContent.append("المادة,الكمية المتوفرة,الحد الأدنى للأمان,الوحدة\n")
+            csvContent.append("${escapeCsvCell("المادة")},${escapeCsvCell("الكمية المتوفرة")},${escapeCsvCell("الحد الأدنى للأمان")},${escapeCsvCell("الوحدة")}\n")
             lowStockList.forEach { p ->
-                csvContent.append("${p.name},${p.qty},${p.minQty},${p.unit}\n")
+                csvContent.append("${escapeCsvCell(p.name)},${escapeCsvCell(p.qty)},${escapeCsvCell(p.minQty)},${escapeCsvCell(p.unit)}\n")
             }
         }
     }
@@ -6219,6 +6330,7 @@ fun BarcodeThermalPrintDialog(
             """.trimIndent()
 
             val webView = android.webkit.WebView(context)
+            MainActivity.tempWebViewForPrinting = webView
             webView.webViewClient = object : android.webkit.WebViewClient() {
                 override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
                     val printAdapter = webView.createPrintDocumentAdapter(jobName)
@@ -6681,6 +6793,447 @@ fun ManageCategoriesDialog(
     }
 }
 
+// System print adapter helper for Invoices (handles both A4 standard layout and 80mm/58mm thermal receipt layouts)
+fun printInvoiceDoc(
+    context: android.content.Context,
+    invoice: Invoice,
+    items: List<InvoiceItem>,
+    printType: String, // "a4" or "thermal"
+    companyName: String,
+    companyPhone: String,
+    companyAddress: String,
+    companyCurrency: String,
+    viewModel: AppViewModel
+) {
+    val htmlBuilder = java.lang.StringBuilder()
+    val activeCurrency = invoice.currency
+    val typeText = when (invoice.type) {
+        "sale" -> "فاتورة مبيعات"
+        "purchase" -> "فاتورة مشتريات"
+        "return_sale" -> "فاتورة مرتجع مبيعات"
+        "return_purchase" -> "فاتورة مرتجع مشتريات"
+        else -> "فاتورة تجارية"
+    }
+    
+    val paymentTypeText = if (invoice.paymentType == "cash") "نقدي كاش" else "آجل على الذمة"
+    
+    if (printType == "thermal") {
+        htmlBuilder.append("""
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <style>
+                    body {
+                        font-family: 'Courier New', monospace, sans-serif;
+                        direction: rtl;
+                        padding: 2px 10px;
+                        width: 100%;
+                        max-width: 290px;
+                        margin: 0 auto;
+                        font-size: 11px;
+                        color: #000;
+                    }
+                    header {
+                        text-align: center;
+                        margin-bottom: 8px;
+                        border-bottom: 1px dashed #000;
+                        padding-bottom: 6px;
+                    }
+                    h2 { margin: 2px 0; font-size: 14px; font-weight: bold; }
+                    h3 { margin: 1px 0; font-size: 11px; font-weight: normal; }
+                    .meta-info {
+                        font-size: 10px;
+                        margin-bottom: 4px;
+                        border-bottom: 1px dashed #000;
+                        padding-bottom: 4px;
+                    }
+                    .meta-row { display: flex; justify-content: space-between; margin: 1px 0; }
+                    .items-table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin-top: 4px;
+                        margin-bottom: 4px;
+                        font-size: 10px;
+                    }
+                    .items-table th, .items-table td {
+                        padding: 2px 0;
+                        text-align: right;
+                    }
+                    .items-table th {
+                        border-bottom: 1px solid #000;
+                        font-weight: bold;
+                    }
+                    .items-table td {
+                        border-bottom: 0.5px dashed #ccc;
+                    }
+                    .summary-box {
+                        margin-top: 4px;
+                        border-top: 1px dashed #000;
+                        padding-top: 4px;
+                        font-size: 10px;
+                    }
+                    .summary-row {
+                        display: flex;
+                        justify-content: space-between;
+                        margin: 1px 0;
+                    }
+                    .grand-total {
+                        font-size: 13px;
+                        font-weight: bold;
+                        border: 1px solid #000;
+                        padding: 3px;
+                        text-align: center;
+                        margin-top: 4px;
+                    }
+                    .footer {
+                        text-align: center;
+                        font-size: 9px;
+                        margin-top: 10px;
+                        border-top: 1px dashed #000;
+                        padding-top: 6px;
+                    }
+                </style>
+            </head>
+            <body>
+                <header>
+                    <h2>$companyName</h2>
+                    <h3>$typeText</h3>
+                    <p style="font-size: 9px; margin: 2px 0;">هاتف: $companyPhone | العنوان: $companyAddress</p>
+                </header>
+                <div class="meta-info">
+                    <div class="meta-row"><span>رقم الفاتورة:</span> <span><b>${invoice.id}</b></span></div>
+                    <div class="meta-row"><span>التاريخ:</span> <span>${invoice.date}</span></div>
+                    <div class="meta-row"><span>العميل:</span> <span><b>${invoice.customer}</b></span></div>
+                    <div class="meta-row"><span>الدفع:</span> <span>$paymentTypeText</span></div>
+                </div>
+                
+                <table class="items-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 50%;">المادة</th>
+                            <th style="width: 15%; text-align: center;">الكمية</th>
+                            <th style="width: 35%; text-align: left;">الإجمالي</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        """.trimIndent())
+        
+        items.forEach { item ->
+            htmlBuilder.append("""
+                <tr>
+                    <td>${item.name}</td>
+                    <td style="text-align: center;">${item.qty}</td>
+                    <td style="text-align: left;">${viewModel.formatCurrency(item.qty * item.price)}</td>
+                </tr>
+            """.trimIndent())
+        }
+        
+        val itemsTotal = items.sumOf { it.qty * it.price }
+        htmlBuilder.append("""
+                    </tbody>
+                </table>
+                
+                <div class="summary-box">
+                    <div class="summary-row"><span>إجمالي قيمة المواد:</span> <span>${viewModel.formatCurrency(itemsTotal)} $activeCurrency</span></div>
+        """.trimIndent())
+        
+        if (invoice.discount > 0.0) {
+            htmlBuilder.append("""
+                    <div class="summary-row"><span>الخصم الممنوح:</span> <span>- ${viewModel.formatCurrency(invoice.discount)} $activeCurrency</span></div>
+            """.trimIndent())
+        }
+        
+        if (invoice.tax > 0.0) {
+            htmlBuilder.append("""
+                    <div class="summary-row"><span>الضريبة المضافة:</span> <span>+ ${viewModel.formatCurrency(invoice.tax)} $activeCurrency</span></div>
+            """.trimIndent())
+        }
+        
+        htmlBuilder.append("""
+                    <div class="grand-total">
+                        الصافي النهائي: ${viewModel.formatCurrency(invoice.total)} $activeCurrency
+                    </div>
+        """.trimIndent())
+        
+        if (invoice.paymentType == "credit") {
+            val remaining = maxOf(0.0, invoice.total - invoice.paidAmount)
+            htmlBuilder.append("""
+                    <div class="summary-row" style="margin-top: 2px;"><span>المسدد نقداً:</span> <span>${viewModel.formatCurrency(invoice.paidAmount)} $activeCurrency</span></div>
+                    <div class="summary-row"><span>المتبقي في الذمة:</span> <span>${viewModel.formatCurrency(remaining)} $activeCurrency</span></div>
+            """.trimIndent())
+        }
+        
+        if (invoice.notes.isNotBlank()) {
+            htmlBuilder.append("""
+                    <div style="font-size: 8px; margin-top: 4px; border-top: 0.5px dashed #ccc; padding-top: 2px;">
+                        <b>ملاحظات:</b> ${invoice.notes}
+                    </div>
+            """.trimIndent())
+        }
+        
+        htmlBuilder.append("""
+                </div>
+                <div class="footer">
+                    <p>نشكر ثقتكم بنا وزيارتكم الكريمة!</p>
+                    <p style="font-size: 8px; color: #555;">تم التوليد والطباعة عبر المحاسب الذكي 📈</p>
+                </div>
+            </body>
+            </html>
+        """.trimIndent())
+        
+    } else {
+        htmlBuilder.append("""
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <style>
+                    body {
+                        font-family: 'Courier New', sans-serif;
+                        direction: rtl;
+                        padding: 20px;
+                        background-color: #fff;
+                    }
+                    header {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        border-bottom: 2px solid #1c544d;
+                        padding-bottom: 10px;
+                        margin-bottom: 20px;
+                    }
+                    .company-info h2 { margin: 0; color: #1c544d; font-size: 22px; font-weight: bold; }
+                    .company-info p { margin: 2px 0; color: #555; font-size: 12px; }
+                    .invoice-title { text-align: left; }
+                    .invoice-title h1 { margin: 0; color: #1c544d; font-size: 20px; }
+                    .invoice-title p { margin: 2px 0; color: #777; font-size: 12px; }
+                    
+                    .meta-table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin-bottom: 20px;
+                    }
+                    .meta-table td {
+                        padding: 8px;
+                        border: 1px dashed #ccc;
+                        font-size: 13px;
+                    }
+                    
+                    .items-table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin-top: 10px;
+                        margin-bottom: 20px;
+                    }
+                    .items-table th, .items-table td {
+                        padding: 10px;
+                        border: 1px solid #ddd;
+                        text-align: right;
+                        font-size: 12px;
+                    }
+                    .items-table th {
+                        background-color: #e4eceb;
+                        color: #1c544d;
+                        font-weight: bold;
+                    }
+                    
+                    .total-section {
+                        width: 100%;
+                        display: flex;
+                        justify-content: flex-end;
+                        margin-top: 10px;
+                    }
+                    .total-table {
+                        width: 50%;
+                        border-collapse: collapse;
+                    }
+                    .total-table td {
+                        padding: 6px 10px;
+                        border: 1px solid #eee;
+                        text-align: right;
+                        font-size: 12px;
+                    }
+                    .total-row-highlight {
+                        background-color: #f7faf9;
+                        border-top: 2px solid #1c544d !important;
+                        font-weight: bold;
+                        font-size: 14px !important;
+                        color: #1c544d;
+                    }
+                    .notes-box {
+                        margin-top: 20px;
+                        border: 1px solid #ddd;
+                        background-color: #fafafa;
+                        padding: 10px;
+                        border-radius: 4px;
+                        font-size: 11px;
+                        width: 45%;
+                        float: right;
+                    }
+                    .signature-box {
+                        margin-top: 40px;
+                        display: flex;
+                        justify-content: space-between;
+                        padding: 0 20px;
+                        font-size: 12px;
+                        clear: both;
+                    }
+                    .footer-branding {
+                        text-align: center;
+                        margin-top: 60px;
+                        font-size: 10px;
+                        color: #777;
+                        border-top: 1px solid #1c544d;
+                        padding-top: 10px;
+                    }
+                </style>
+            </head>
+            <body>
+                <header>
+                    <div class="company-info">
+                        <h2>$companyName</h2>
+                        <p>العنوان: $companyAddress</p>
+                        <p>رقم الهاتف: $companyPhone</p>
+                    </div>
+                    <div class="invoice-title">
+                        <h1>$typeText</h1>
+                        <p>تاريخ الفاتورة: ${invoice.date}</p>
+                        <p>الرقم المرجعي: <b>${invoice.id}</b></p>
+                    </div>
+                </header>
+                
+                <table class="meta-table">
+                    <tr>
+                        <td><b>اسم العميل المحاسبي:</b> ${invoice.customer}</td>
+                        <td><b>طريقة الدفع والتحصيل:</b> $paymentTypeText</td>
+                    </tr>
+                    <tr>
+                        <td><b>الجهة المصدرة:</b> نظام المبيعات والمخازن</td>
+                        <td><b>عملة الفاتورة:</b> $activeCurrency</td>
+                    </tr>
+                </table>
+                
+                <table class="items-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 10%; text-align: center;">الرقم</th>
+                            <th style="width: 40%;">اسم المادة</th>
+                            <th style="width: 15%; text-align: center;">الكمية</th>
+                            <th style="width: 15%; text-align: left;">سعر الوحدة</th>
+                            <th style="width: 20%; text-align: left;">الإجمالي</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        """.trimIndent())
+        
+        items.forEachIndexed { index, item ->
+            htmlBuilder.append("""
+                <tr>
+                    <td style="text-align: center;">${index + 1}</td>
+                    <td><b>${item.name}</b></td>
+                    <td style="text-align: center;">${item.qty}</td>
+                    <td style="text-align: left;">${viewModel.formatCurrency(item.price)} $activeCurrency</td>
+                    <td style="text-align: left;"><b>${viewModel.formatCurrency(item.qty * item.price)}</b> $activeCurrency</td>
+                </tr>
+            """.trimIndent())
+        }
+        
+        val itemsTotal = items.sumOf { it.qty * it.price }
+        htmlBuilder.append("""
+                    </tbody>
+                </table>
+                
+                <div class="total-section">
+                    <table class="total-table">
+                        <tr>
+                            <td>إجمالي قيمة المواد:</td>
+                            <td style="text-align: left;">${viewModel.formatCurrency(itemsTotal)} $activeCurrency</td>
+                        </tr>
+        """.trimIndent())
+        
+        if (invoice.discount > 0.0) {
+            htmlBuilder.append("""
+                        <tr>
+                            <td style="color: #C0392B;">قيمة الخصم الممنوح:</td>
+                            <td style="text-align: left; color: #C0392B; font-weight: bold;">- ${viewModel.formatCurrency(invoice.discount)} $activeCurrency</td>
+                        </tr>
+            """.trimIndent())
+        }
+        
+        if (invoice.tax > 0.0) {
+            htmlBuilder.append("""
+                        <tr>
+                            <td style="color: #2E86C1;">الضريبة المضافة:</td>
+                            <td style="text-align: left; color: #2E86C1; font-weight: bold;">+ ${viewModel.formatCurrency(invoice.tax)} $activeCurrency</td>
+                        </tr>
+            """.trimIndent())
+        }
+        
+        htmlBuilder.append("""
+                        <tr class="total-row-highlight">
+                            <td>صافي قيمة الفاتورة النهائية:</td>
+                            <td style="text-align: left;">${viewModel.formatCurrency(invoice.total)} $activeCurrency</td>
+                        </tr>
+        """.trimIndent())
+        
+        if (invoice.paymentType == "credit") {
+            val remaining = maxOf(0.0, invoice.total - invoice.paidAmount)
+            htmlBuilder.append("""
+                        <tr>
+                            <td style="color: #27AE60;">المسدد (دفعة نقدية):</td>
+                            <td style="text-align: left; color: #27AE60;">${viewModel.formatCurrency(invoice.paidAmount)} $activeCurrency</td>
+                        </tr>
+                        <tr>
+                            <td style="color: #E67E22; font-weight: bold;">المتبقي برسم الذمة:</td>
+                            <td style="text-align: left; color: #E67E22; font-weight: bold;">${viewModel.formatCurrency(remaining)} $activeCurrency</td>
+                        </tr>
+            """.trimIndent())
+        }
+        
+        htmlBuilder.append("""
+                    </table>
+                </div>
+        """.trimIndent())
+        
+        if (invoice.notes.isNotBlank()) {
+            htmlBuilder.append("""
+                <div class="notes-box">
+                    <b>ملاحظات إضافية:</b>
+                    <p style="margin: 4px 0 0 0; line-height: 1.5;">${invoice.notes}</p>
+                </div>
+            """.trimIndent())
+        }
+        
+        htmlBuilder.append("""
+                <div class="signature-box">
+                    <div><b>توقيع المحاسب المستند:</b> _________________</div>
+                    <div><b>توقيع المستلم:</b> _________________</div>
+                </div>
+                
+                <div class="footer-branding">
+                    <p>نشكر ثقتكم بنا وزيارتكم الكريمة!</p>
+                    <p>تم توليد وحفظ هذا المستند كملف PDF رسمي مشفر إلكترونياً عبر تطبيق فواتير والمحاسب الذكي 📱</p>
+                </div>
+            </body>
+            </html>
+        """.trimIndent())
+    }
+    
+    val act = findActivity(context)
+    act?.runOnUiThread {
+        val webView = android.webkit.WebView(act)
+        MainActivity.tempWebViewForPrinting = webView
+        webView.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onPageFinished(view: android.webkit.WebView, url: String) {
+                val printManager = act.getSystemService(android.content.Context.PRINT_SERVICE) as android.print.PrintManager
+                val jobName = "فاتورة - ${invoice.id} - ${invoice.customer}"
+                val printAdapter = webView.createPrintDocumentAdapter(jobName)
+                printManager.print(jobName, printAdapter, android.print.PrintAttributes.Builder().build())
+            }
+        }
+        webView.loadDataWithBaseURL(null, htmlBuilder.toString(), "text/html", "utf-8", null)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InvoicePreviewPrintDialog(
@@ -6691,8 +7244,10 @@ fun InvoicePreviewPrintDialog(
 ) {
     val items = remember(invoice) { viewModel.deserializeItems(invoice.itemsJson) }
     var isSimulatingPrint by remember { mutableStateOf(false) }
+    var showPrintOptions by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val activeCurrency = invoice.currency
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     Dialog(onDismissRequest = { onClose() }) {
         Card(
@@ -6962,19 +7517,435 @@ fun InvoicePreviewPrintDialog(
                     // Print action button
                     Button(
                         onClick = {
-                            isSimulatingPrint = true
-                            scope.launch {
-                                kotlinx.coroutines.delay(1800)
-                                isSimulatingPrint = false
-                                viewModel.triggerToast("تمت طباعة الفاتورة ذات الرقم [${invoice.id}] بنجاح ✓")
-                                onClose()
-                            }
+                            showPrintOptions = true
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         modifier = Modifier.weight(1.3f),
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Text("🖨️ طباعة الفاتورة", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        if (showPrintOptions) {
+            AlertDialog(
+                onDismissRequest = { showPrintOptions = false },
+                title = { 
+                    Text(
+                        text = "خيارات ونوع الطباعة 🖨️", 
+                        fontWeight = FontWeight.Bold, 
+                        fontSize = 16.sp, 
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Right
+                    ) 
+                },
+                text = {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "الرجاء تحديد نوع وتنسيق الفاتورة لملائمتها مع الطابعة المتصلة بهاتفك:", 
+                            fontSize = 13.sp, 
+                            color = Color.Gray,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Right
+                        )
+                        
+                        // Option 1: A4 layout
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showPrintOptions = false
+                                    printInvoiceDoc(
+                                        context = context,
+                                        invoice = invoice,
+                                        items = items,
+                                        printType = "a4",
+                                        companyName = viewModel.companyName.value,
+                                        companyPhone = viewModel.companyPhone.value,
+                                        companyAddress = viewModel.companyAddress.value,
+                                        companyCurrency = viewModel.companyCurrency.value,
+                                        viewModel = viewModel
+                                    )
+                                },
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFF2F7F6)),
+                            border = BorderStroke(1.dp, Color(0xFFD0DEDD))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp), 
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.End,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = "📄 طباعة قياسية (برنت A4 أو PDF)", 
+                                        fontWeight = FontWeight.Bold, 
+                                        fontSize = 13.sp,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Right
+                                    )
+                                    Text(
+                                        text = "للطابعات المكتبية المنزلية والشبكية وتطبيقات PDF", 
+                                        fontSize = 11.sp, 
+                                        color = Color.Gray,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Right
+                                    )
+                                }
+                            }
+                        }
+                        
+                        // Option 2: Thermal receipt layout
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showPrintOptions = false
+                                    printInvoiceDoc(
+                                        context = context,
+                                        invoice = invoice,
+                                        items = items,
+                                        printType = "thermal",
+                                        companyName = viewModel.companyName.value,
+                                        companyPhone = viewModel.companyPhone.value,
+                                        companyAddress = viewModel.companyAddress.value,
+                                        companyCurrency = viewModel.companyCurrency.value,
+                                        viewModel = viewModel
+                                    )
+                                },
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFF9F5F1)),
+                            border = BorderStroke(1.dp, Color(0xFFEFE5DB))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp), 
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.End,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = "🧾 طباعة حرارية (إيصال كاشير 80 مم / 58 مم)", 
+                                        fontWeight = FontWeight.Bold, 
+                                        fontSize = 13.sp,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Right
+                                    )
+                                    Text(
+                                        text = "للطابعات والمكائن الحرارية المحمولة وبلوتوث", 
+                                        fontSize = 11.sp, 
+                                        color = Color.Gray,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Right
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showPrintOptions = false }) {
+                        Text(text = "إلغاء الأمر", color = Color.Gray)
+                    }
+                }
+            )
+        }
+    }
+}
+
+fun printVoucherDoc(
+    context: android.content.Context,
+    voucher: Voucher,
+    accountName: String,
+    companyName: String,
+    companyPhone: String,
+    companyAddress: String,
+    viewModel: AppViewModel
+) {
+    val htmlBuilder = java.lang.StringBuilder()
+    val titleText = if (voucher.type == "receipt") "سند قبض نقدي" else "سند صرف نقدي"
+    val subtitleText = if (voucher.type == "receipt") "مقبوضات نقدية وصندوق" else "مدفوعات نقدية خارج الصندوق"
+    val formattedAmount = viewModel.formatCurrency(voucher.amount)
+    
+    htmlBuilder.append("""
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body { font-family: 'Courier New', sans-serif; direction: rtl; padding: 25px; color: #333; }
+                .border-wrapper { border: 3px double #1c544d; padding: 20px; }
+                header { text-align: center; border-bottom: 2px solid #1c544d; padding-bottom: 12px; margin-bottom: 20px; }
+                .company-name { font-size: 22px; font-weight: bold; color: #1c544d; margin: 0; }
+                .company-info { font-size: 11px; color: #666; margin: 3px 0; }
+                .doc-title { font-size: 26px; font-weight: bold; color: #1c544d; text-align: center; margin: 15px 0 5px 0; letter-spacing: 1px; }
+                .doc-subtitle { font-size: 12px; color: #777; text-align: center; margin-bottom: 25px; }
+                .meta-section { width: 100%; border-collapse: collapse; margin-bottom: 25px; }
+                .meta-section td { padding: 10px; border: 1px dashed #ccc; font-size: 13px; vertical-align: middle; }
+                .amount-box { border: 2px solid #1c544d; background-color: #f7faf9; font-size: 20px; font-weight: bold; color: #1c544d; padding: 12px; text-align: center; width: 60%; margin: 15px auto; }
+                .sign { width: 100%; margin-top: 35px; border-collapse: collapse; }
+                .sign td { font-size: 13px; font-weight: bold; text-align: center; width: 33%; padding-top: 50px; }
+                .sign-line { border-top: 1px solid #777; width: 80%; margin: 0 auto; padding-top: 6px; }
+                footer { text-align: center; margin-top: 40px; font-size: 10px; color: #aaa; border-top: 1px solid #eee; padding-top: 15px; }
+            </style>
+        </head>
+        <body>
+            <div class="border-wrapper">
+                <header>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                            <td style="width: 40%; text-align: right; vertical-align: top;">
+                                <div class="company-name">${companyName}</div>
+                                <div class="company-info">هاتف: ${companyPhone}</div>
+                                <div class="company-info">العنوان: ${companyAddress}</div>
+                            </td>
+                            <td style="width: 20%; text-align: center; vertical-align: middle;">
+                                <div style="font-size: 32px;">📑</div>
+                            </td>
+                            <td style="width: 40%; text-align: left; vertical-align: top; font-size: 12px; color: #555;">
+                                <div><b>رقم المستند الداخلي:</b> #${voucher.id}</div>
+                                <div><b>التاريخ والوقت:</b> ${voucher.date}</div>
+                                <div><b>حالة السند:</b> مرحل ومعتمد (Saved)</div>
+                            </td>
+                        </tr>
+                    </table>
+                </header>
+                
+                <div class="doc-title">${titleText}</div>
+                <div class="doc-subtitle">${subtitleText}</div>
+                
+                <table class="meta-section">
+                    <tr>
+                        <td style="width: 25%; background-color: #f7faf9;"><b>اسم المستلم/المستفيد:</b></td>
+                        <td style="width: 75%; font-size: 15px; font-weight: bold; color: #1c544d;">${accountName}</td>
+                    </tr>
+                    <tr>
+                        <td style="background-color: #f7faf9;"><b>المبلغ المستحق بالأرقام:</b></td>
+                        <td>
+                            <div class="amount-box">${formattedAmount} ل.س</div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="background-color: #f7faf9;"><b>بيان وتفاصيل الحركة:</b></td>
+                        <td style="font-style: italic; line-height: 1.5;">${voucher.desc.ifBlank { "دفع/قبض نقدي لتسوية متبادلات في الذمم والودائع" }}</td>
+                    </tr>
+                </table>
+                
+                <table class="sign">
+                    <tr>
+                        <td>
+                            <div class="sign-line">أمين الصندوق (الشركة)</div>
+                        </td>
+                        <td>
+                            <div class="sign-line">المحاسب المسؤول</div>
+                        </td>
+                        <td>
+                            <div class="sign-line">توقيع المستلم والعميل</div>
+                        </td>
+                    </tr>
+                </table>
+                
+                <footer>
+                     تم إصدار هذه الوثيقة إلكترونياً وتخزينها في قاعدة البيانات المحلية. تطبيق المحاسب الذكي 📱
+                </footer>
+            </div>
+        </body>
+        </html>
+    """.trimIndent())
+
+    val act = findActivity(context)
+    act?.runOnUiThread {
+        val webView = android.webkit.WebView(act)
+        MainActivity.tempWebViewForPrinting = webView
+        webView.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onPageFinished(view: android.webkit.WebView, url: String) {
+                val printManager = act.getSystemService(android.content.Context.PRINT_SERVICE) as android.print.PrintManager
+                val jobName = "سند-${voucher.id}"
+                val printAdapter = webView.createPrintDocumentAdapter(jobName)
+                printManager.print(jobName, printAdapter, android.print.PrintAttributes.Builder().build())
+            }
+        }
+        webView.loadDataWithBaseURL(null, htmlBuilder.toString(), "text/html", "utf-8", null)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VoucherPreviewDialog(
+    voucher: Voucher,
+    viewModel: AppViewModel,
+    onClose: () -> Unit
+) {
+    val accounts by viewModel.accounts.collectAsState()
+    val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val matchedAccount = remember(voucher, accounts) { accounts.find { it.id == voucher.accountId } }
+    val accountName = matchedAccount?.name ?: "حساب غير معروف"
+
+    Dialog(onDismissRequest = { onClose() }) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.75f),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, Color(0xFFD0DEDD))
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .fillMaxSize()
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "تفاصيل مستند السند المحاسبي",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 16.sp
+                    )
+                    IconButton(onClick = onClose) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "إغلاق")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Title/Type Banner
+                    val isReceipt = voucher.type == "receipt"
+                    val bannerBg = if (isReceipt) Color(0xFFE8F8F1) else Color(0xFFFCE8E6)
+                    val bannerBorder = if (isReceipt) Color(0xFF2EBD7A) else Color(0xFFE03C3C)
+                    val typeText = if (isReceipt) "سند قبض نقدي لصندوق الشركة 📥" else "سند صرف نقدي خارج صندوق الشركة 📤"
+                    
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(bannerBg, RoundedCornerShape(8.dp))
+                            .border(1.dp, bannerBorder, RoundedCornerShape(8.dp))
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            text = typeText,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = bannerBorder,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    }
+
+                    // Metadata Card
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F9F8)),
+                        border = BorderStroke(1.dp, Color(0xFFD0DEDD))
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = "رقم السجل المحاسبي:", fontSize = 11.sp, color = Color.Gray)
+                                Text(text = "#${voucher.id}", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = "التاريخ:", fontSize = 11.sp, color = Color.Gray)
+                                Text(text = voucher.date, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = "اسم الحساب المستهدف:", fontSize = 11.sp, color = Color.Gray)
+                                Text(text = accountName, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+
+                    // Amount Box
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAF9)),
+                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(text = "القيمة الإجمالية للمستند النقدي", fontSize = 11.sp, color = Color.Gray)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "${viewModel.formatCurrency(voucher.amount)} ل.س",
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    // Notice / Description
+                    Text(text = "ملاحظات وتوضيح الحركة:", fontSize = 11.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFFF9F9F9), RoundedCornerShape(6.dp))
+                            .border(1.dp, Color(0xFFE5E5E5), RoundedCornerShape(6.dp))
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            text = voucher.desc.ifBlank { "لا توجد ملاحظات إضافية مسجلة على هذا السند المالي." },
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                            color = Color.DarkGray
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Actions Button Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onClose,
+                        modifier = Modifier.weight(1.5f)
+                    ) {
+                        Text("إغلاق الخيارات")
+                    }
+                    Button(
+                        onClick = {
+                            printVoucherDoc(
+                                context = context,
+                                voucher = voucher,
+                                accountName = accountName,
+                                companyName = viewModel.companyName.value,
+                                companyPhone = viewModel.companyPhone.value,
+                                companyAddress = viewModel.companyAddress.value,
+                                viewModel = viewModel
+                            )
+                        },
+                        modifier = Modifier.weight(2f)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Text("طباعة ومشاركة 🖨️")
+                        }
                     }
                 }
             }
