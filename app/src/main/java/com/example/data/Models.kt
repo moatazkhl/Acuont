@@ -16,7 +16,9 @@ data class Invoice(
     val itemsJson: String,      // Serialized JSON array of invoice items
     val currency: String = "ل.س",
     val paymentType: String = "cash", // "cash" (نقدي), "credit" (آجل)
-    val paidAmount: Double = 0.0 // دفعة مسجلة لفاتورة الآجل
+    val paidAmount: Double = 0.0, // دفعة مسجلة لفاتورة الآجل
+    val discount: Double = 0.0, // حسم مقدر أو نسبة
+    val tax: Double = 0.0 // ضريبة مضافة
 )
 
 @Entity(tableName = "accounts")

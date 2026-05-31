@@ -362,6 +362,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val invoiceType = MutableStateFlow("sale")
     val invoicePaymentType = MutableStateFlow("cash") // "cash" (نقدي), "credit" (آجل)
     val invoicePaidAmount = MutableStateFlow("")
+    val invoiceDiscount = MutableStateFlow("")
+    val invoiceTax = MutableStateFlow("")
     val editingInvoice = MutableStateFlow<Invoice?>(null)
 
     fun loadInvoiceForEditing(invoice: Invoice) {
@@ -373,6 +375,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         invoiceCurrency.value = invoice.currency
         invoicePaymentType.value = invoice.paymentType
         invoicePaidAmount.value = if (invoice.paidAmount > 0.0) invoice.paidAmount.toInt().toString() else ""
+        invoiceDiscount.value = if (invoice.discount > 0.0) invoice.discount.toInt().toString() else ""
+        invoiceTax.value = if (invoice.tax > 0.0) invoice.tax.toInt().toString() else ""
         tempInvoiceItems.value = deserializeItems(invoice.itemsJson)
     }
 
@@ -386,6 +390,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         invoiceType.value = "sale"
         invoicePaymentType.value = "cash"
         invoicePaidAmount.value = ""
+        invoiceDiscount.value = ""
+        invoiceTax.value = ""
     }
 
     // New Product Form State
@@ -744,8 +750,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val total = items.sumOf { it.qty * it.price }
-        val profit = items.sumOf { it.qty * (it.price - it.cost) }
+        val subtotal = items.sumOf { it.qty * it.price }
+        val discountVal = invoiceDiscount.value.toDoubleOrNull() ?: 0.0
+        val taxVal = invoiceTax.value.toDoubleOrNull() ?: 0.0
+        val total = subtotal - discountVal + taxVal
+        val grossProfit = items.sumOf { it.qty * (it.price - it.cost) }
+        val profit = grossProfit - discountVal
         val dateVal = selectedInvoiceDate.value.ifBlank { "2026-05-30" }
 
         val invStr = serializeItems(items)
@@ -765,7 +775,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             itemsJson = invStr,
             currency = invoiceCurrency.value,
             paymentType = invoicePaymentType.value,
-            paidAmount = invoicePaidAmount.value.toDoubleOrNull() ?: 0.0
+            paidAmount = invoicePaidAmount.value.toDoubleOrNull() ?: 0.0,
+            discount = discountVal,
+            tax = taxVal
         )
 
         viewModelScope.launch {
@@ -970,6 +982,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val item = currentItems[index]
             val newQty = maxOf(1, qty)
             currentItems[index] = item.copy(qty = newQty)
+            tempInvoiceItems.value = currentItems
+        }
+    }
+
+    fun setInvoiceItemFormPrice(index: Int, price: Double) {
+        val currentItems = tempInvoiceItems.value.toMutableList()
+        if (index in currentItems.indices) {
+            val item = currentItems[index]
+            val newPrice = maxOf(0.0, price)
+            currentItems[index] = item.copy(price = newPrice)
             tempInvoiceItems.value = currentItems
         }
     }
