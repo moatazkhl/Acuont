@@ -24,5 +24,18 @@ abstract class AppDatabase : RoomDatabase() {
                 .build()
             }
         }
+
+        fun closeAndRemoveDatabase(dbName: String) {
+            val actualDbName = if (dbName.endsWith(".db")) dbName else "$dbName.db"
+            INSTANCES.remove(actualDbName)?.let { db ->
+                try {
+                    if (db.isOpen) {
+                        db.close()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
     }
 }

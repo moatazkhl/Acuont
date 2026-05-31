@@ -1829,6 +1829,56 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
 
     var companyToDelete by remember { mutableStateOf<com.example.ui.CompanyInfo?>(null) }
 
+    // --- Backup list and confirmation states ---
+    val availableBackups by viewModel.availableBackups.collectAsState()
+    var backupToRestoreItem by remember { mutableStateOf<com.example.ui.AppViewModel.BackupItem?>(null) }
+    var backupToDeleteItem by remember { mutableStateOf<com.example.ui.AppViewModel.BackupItem?>(null) }
+    var backupsDropdownExpanded by remember { mutableStateOf(false) }
+
+    // --- Google Drive Backup, OAuth and Sync states ---
+    val googleAccountEmail by viewModel.googleAccountEmail.collectAsState()
+    val isGoogleDriveLinked by viewModel.isGoogleDriveLinked.collectAsState()
+    val cloudBackups by viewModel.cloudBackups.collectAsState()
+    val isLoadingCloudBackups by viewModel.isLoadingCloudBackups.collectAsState()
+    val isSyncingToCloud by viewModel.isSyncingToCloud.collectAsState()
+    val googleAuthIntent by viewModel.googleAuthIntentToResolve.collectAsState()
+    var cloudBackupsDropdownExpanded by remember { mutableStateOf(false) }
+    var cloudBackupToRestoreItem by remember { mutableStateOf<com.example.ui.GoogleDriveHelper.CloudBackupItem?>(null) }
+    var cloudBackupToDeleteItem by remember { mutableStateOf<com.example.ui.GoogleDriveHelper.CloudBackupItem?>(null) }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    val googleSignInLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val task = com.google.android.gms.auth.api.signin.GoogleSignIn.getSignedInAccountFromIntent(result.data)
+            try {
+                val account = task.getResult(com.google.android.gms.common.api.ApiException::class.java)
+                if (account != null) {
+                    viewModel.linkGoogleAccount(account)
+                }
+            } catch (e: Exception) {
+                viewModel.triggerToast("فشل ربط الحساب: ${e.message}")
+            }
+        }
+    }
+
+    val authResolutionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        viewModel.clearGoogleAuthIntent()
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            viewModel.refreshCloudBackups()
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(googleAuthIntent) {
+        googleAuthIntent?.let {
+            authResolutionLauncher.launch(it)
+        }
+    }
+
     // --- Developer and Verification states ---
     var showDiagnosticsDialog by remember { mutableStateOf(false) }
     var showTracerDialog by remember { mutableStateOf(false) }
@@ -2012,13 +2062,37 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedTextField(
-                        value = tempCompanyCurrencyText,
-                        onValueChange = { tempCompanyCurrencyText = it },
-                        label = { Text("العملة الافتراضية للحسابات") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    var showCurrDropdown by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = tempCompanyCurrencyText,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("العملة الافتراضية للحسابات") },
+                            trailingIcon = { Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { showCurrDropdown = true }
+                        )
+                        DropdownMenu(
+                            expanded = showCurrDropdown,
+                            onDismissRequest = { showCurrDropdown = false },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            listOf("ل.س", "USD", "EUR", "SAR", "TRY").forEach { cur ->
+                                DropdownMenuItem(
+                                    text = { Text(cur) },
+                                    onClick = {
+                                        tempCompanyCurrencyText = cur
+                                        showCurrDropdown = false
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -2073,13 +2147,37 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedTextField(
-                        value = newCompanyCurrencyText,
-                        onValueChange = { newCompanyCurrencyText = it },
-                        label = { Text("العملة الافتراضية") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    var showCreateCurrDropdown by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = newCompanyCurrencyText,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("العملة الافتراضية") },
+                            trailingIcon = { Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { showCreateCurrDropdown = true }
+                        )
+                        DropdownMenu(
+                            expanded = showCreateCurrDropdown,
+                            onDismissRequest = { showCreateCurrDropdown = false },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            listOf("ل.س", "USD", "EUR", "SAR", "TRY").forEach { cur ->
+                                DropdownMenuItem(
+                                    text = { Text(cur) },
+                                    onClick = {
+                                        newCompanyCurrencyText = cur
+                                        showCreateCurrDropdown = false
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -2139,13 +2237,37 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedTextField(
-                        value = editCompanyCurrencyText,
-                        onValueChange = { editCompanyCurrencyText = it },
-                        label = { Text("العملة الافتراضية") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    var showEditCurrDropdown by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = editCompanyCurrencyText,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("العملة الافتراضية") },
+                            trailingIcon = { Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { showEditCurrDropdown = true }
+                        )
+                        DropdownMenu(
+                            expanded = showEditCurrDropdown,
+                            onDismissRequest = { showEditCurrDropdown = false },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            listOf("ل.س", "USD", "EUR", "SAR", "TRY").forEach { cur ->
+                                DropdownMenuItem(
+                                    text = { Text(cur) },
+                                    onClick = {
+                                        editCompanyCurrencyText = cur
+                                        showEditCurrDropdown = false
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -2212,85 +2334,149 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
             border = BorderStroke(1.dp, Color(0xFFD0DEDD))
         ) {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("قائمة الشركات والدفاتر النشطة حيال قاعدة الـ SQLite المتاحة:", fontSize = 11.sp, color = Color.Gray)
-                
-                companiesList.forEach { company ->
-                    val isActive = company.id == activeCompanyId
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                color = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent,
-                                shape = RoundedCornerShape(8.dp)
-                            )
-                            .padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(text = "🏪", fontSize = 14.sp)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = company.name,
-                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 13.sp
-                                )
-                            }
-                            Text(
-                                text = "هاتف: ${company.phone} | عنوان: ${company.address} | عملة: ${company.currency}",
-                                fontSize = 10.sp,
-                                color = Color.Gray,
-                                modifier = Modifier.padding(start = 22.dp, top = 2.dp)
-                            )
-                            Text(
-                                text = if (isActive) "قيد التشغيل والمحاسبة حالياً (نشطة) 🟢" else "اضغط للتبديل والتصفح",
-                                fontSize = 10.sp,
-                                color = if (isActive) MaterialTheme.colorScheme.primary else Color.Gray,
-                                modifier = Modifier.padding(start = 22.dp, top = 2.dp)
-                            )
-                        }
+                Text("اختر المنشأة المالية من القائمة المنسدلة للتبديل والتحكم والاطلاع:", fontSize = 11.sp, color = Color.Gray)
 
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(
-                                onClick = { 
-                                    if (!isActive) {
-                                        viewModel.switchCompanyDb(company.id, company.name)
+                var companyDropdownExpanded by remember { mutableStateOf(false) }
+
+                // Dropdown Selector for all companies
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = companyName,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("قائمة الشركات والدفاتر المالية المتوفرة") },
+                        leadingIcon = { Text("🏪", modifier = Modifier.padding(start = 8.dp)) },
+                        trailingIcon = { Icon(Icons.Default.ArrowDropDown, null) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = Color(0xFFD0DEDD)
+                        )
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable { companyDropdownExpanded = true }
+                    )
+                    DropdownMenu(
+                        expanded = companyDropdownExpanded,
+                        onDismissRequest = { companyDropdownExpanded = false },
+                        modifier = Modifier.fillMaxWidth(0.85f)
+                    ) {
+                        companiesList.forEach { comp ->
+                            val isActive = comp.id == activeCompanyId
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text("🏪 ", fontSize = 12.sp)
+                                                Text(comp.name, fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal, fontSize = 13.sp)
+                                            }
+                                            Text("هاتف: ${comp.phone} | عملة: ${comp.currency}", fontSize = 10.sp, color = Color.Gray)
+                                        }
+                                        if (isActive) {
+                                            Text("المنشأة النشطة 🟢", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        } else {
+                                            Text("انتقال 🔄", color = Color.Gray, fontSize = 11.sp)
+                                        }
                                     }
                                 },
-                                enabled = !isActive,
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.textButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                )
-                            ) {
-                                Text(if (isActive) "النشطة" else "انتقال 🔄", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                onClick = {
+                                    companyDropdownExpanded = false
+                                    if (!isActive) {
+                                        viewModel.switchCompanyDb(comp.id, comp.name)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Underneath, show detailed info and control buttons for the currently active company
+                val activeCompanyObj = remember(companiesList, activeCompanyId) {
+                    companiesList.find { it.id == activeCompanyId }
+                }
+
+                activeCompanyObj?.let { comp ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.04f)),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("📍 التفاصيل الجغرافية والمالية للمنشأة النشطة:", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                             }
-                            
-                            IconButton(onClick = { 
-                                companyToEdit = company
-                                editCompanyNameText = company.name
-                                editCompanyPhoneText = company.phone
-                                editCompanyAddressText = company.address
-                                editCompanyCurrencyText = company.currency
-                            }) {
-                                Text("✏️", fontSize = 14.sp)
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("رقم المنشأة الإلكتروني:", fontSize = 10.sp, color = Color.Gray)
+                                Text("#${comp.id}", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                             }
-                            
-                            IconButton(
-                                onClick = { companyToDelete = company },
-                                enabled = companiesList.size > 1
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("اسم الشركة:", fontSize = 10.sp, color = Color.Gray)
+                                Text(comp.name, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("رقم الهاتف والاتصال:", fontSize = 10.sp, color = Color.Gray)
+                                Text(comp.phone.ifBlank { "غير محدد" }, fontWeight = FontWeight.Medium, fontSize = 11.sp)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("العنوان الرئيسي:", fontSize = 10.sp, color = Color.Gray)
+                                Text(comp.address.ifBlank { "غير محدد" }, fontWeight = FontWeight.Medium, fontSize = 11.sp)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("العملة المحاسبية الافتراضية:", fontSize = 10.sp, color = Color.Gray)
+                                Text(comp.currency, fontWeight = FontWeight.Bold, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                            }
+
+                            HorizontalDivider(color = Color.LightGray.copy(alpha = 0.3f))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("🗑️", fontSize = 14.sp)
+                                // Edit Button
+                                OutlinedButton(
+                                    onClick = {
+                                        companyToEdit = comp
+                                        editCompanyNameText = comp.name
+                                        editCompanyPhoneText = comp.phone
+                                        editCompanyAddressText = comp.address
+                                        editCompanyCurrencyText = comp.currency
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("تعديل بياناتها ✏️", fontSize = 11.sp)
+                                    }
+                                }
+
+                                // Delete Button
+                                OutlinedButton(
+                                    onClick = { companyToDelete = comp },
+                                    enabled = companiesList.size > 1,
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE03C3C))
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("حذف الدفاتر 🗑️", fontSize = 11.sp)
+                                    }
+                                }
                             }
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(4.dp))
                 Button(
                     onClick = { showCreateCompanyDialog = true },
@@ -2298,82 +2484,6 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text("+ تأسيس منشأة / شركة مالية جديدة", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(text = "إعدادات الشركة والمنشأة", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
-        Spacer(modifier = Modifier.height(6.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, Color(0xFFD0DEDD))
-        ) {
-            Column {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "اسم الشركة الرئيسي", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text(text = companyName, fontSize = 11.sp, color = Color.Gray)
-                    }
-                    Button(onClick = { 
-                        tempCompanyNameText = companyName
-                        tempCompanyPhoneText = companyPhone
-                        tempCompanyAddressText = companyAddress
-                        tempCompanyCurrencyText = companyCurrency
-                        showCompanyDialog = true 
-                    }) {
-                        Text("تعديل البيانات", fontSize = 12.sp)
-                    }
-                }
-                HorizontalDivider(color = Color(0xFFD0DEDD).copy(alpha = 0.5f))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(text = "رقم الهاتف", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text(text = companyPhone, fontSize = 11.sp, color = Color.Gray)
-                    }
-                }
-                HorizontalDivider(color = Color(0xFFD0DEDD).copy(alpha = 0.5f))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(text = "العنوان الرئيسي", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text(text = companyAddress, fontSize = 11.sp, color = Color.Gray)
-                    }
-                }
-                HorizontalDivider(color = Color(0xFFD0DEDD).copy(alpha = 0.5f))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(text = "العملة الأساسية للحسابات", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text(text = companyCurrency, fontSize = 11.sp, color = Color.Gray)
-                    }
-                    Box(modifier = Modifier.background(Color(0xFF2EBD7A).copy(alpha = 0.15f), RoundedCornerShape(20.dp)).padding(horizontal = 10.dp, vertical = 4.dp)) {
-                        Text(text = "نشط رئيسي", color = Color(0xFF1A9A60), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    }
                 }
             }
         }
@@ -2472,7 +2582,7 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        Text(text = "النسخ الاحتياطي السحابي المحلي", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+        Text(text = "النسخ الاحتياطي وإدارة قواعد البيانات المترابطة", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
         Spacer(modifier = Modifier.height(6.dp))
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -2484,31 +2594,382 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { viewModel.triggerToast("جاري إنشاء نسخة احتياطية محلية مشفرة...") }
+                        .clickable { viewModel.backupCurrentDatabase() }
                         .padding(14.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(text = "حفظ نسخة احتياطية للجهاز", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text(text = "مستند مضغوط محلي SQLite", fontSize = 11.sp, color = Color.Gray)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "💾 إنشاء نسخة احتياطية للجهاز الآن", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(text = "حفظ نسخة داتا لحظية حية فورية في المجلد المخصص بالوقت والتاريخ", fontSize = 11.sp, color = Color.Gray)
                     }
                     Text(text = "💾", fontSize = 20.sp)
                 }
+
                 HorizontalDivider(color = Color(0xFFD0DEDD).copy(alpha = 0.5f))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { viewModel.triggerToast("تم ربط السحابة بنجاح ومزامنة الداتا") }
-                        .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(text = "مزامنة Google Drive السحابية", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text(text = "تأمين الملفات ضد التلف والسرقة والضياع", fontSize = 11.sp, color = Color.Gray)
+
+                if (!isGoogleDriveLinked) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val gso = com.google.android.gms.auth.api.signin.GoogleSignInOptions.Builder(
+                                    com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN
+                                )
+                                    .requestEmail()
+                                    .requestScopes(
+                                        com.google.android.gms.common.api.Scope("https://www.googleapis.com/auth/drive.file"),
+                                        com.google.android.gms.common.api.Scope("https://www.googleapis.com/auth/drive.appdata")
+                                    )
+                                    .build()
+                                val client = com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(context, gso)
+                                googleSignInLauncher.launch(client.signInIntent)
+                            }
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "🔗 ربط وتفعيل حساب Google Drive", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                            Text(text = "تسجيل الدخول والمزامنة والنسخ السحابي وبصمة الأمان ضد الضياع", fontSize = 11.sp, color = Color.Gray)
+                        }
+                        Text(text = "☁️", fontSize = 20.sp)
                     }
-                    Text(text = "☁️", fontSize = 20.sp)
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.05f))
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "☁️ حساب Google Drive متصل ونشط",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF2E7D32)
+                                )
+                                Text(
+                                    text = googleAccountEmail ?: "",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color.DarkGray
+                                )
+                            }
+                            TextButton(
+                                onClick = { viewModel.unlinkGoogleAccount() },
+                                colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFD32F2F))
+                            ) {
+                                Text("فصل الحساب 🚪", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        HorizontalDivider(color = Color(0xFFD0DEDD).copy(alpha = 0.5f))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = !isSyncingToCloud) { viewModel.backupCurrentDbToCloud() }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "رفع نسخة سحابية حية الآن",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "توليد ملف نسخة احتياطية حقيقي وبصمة زمنية مباشرة وحفظه سحابياً",
+                                    fontSize = 10.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                            if (isSyncingToCloud) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            } else {
+                                Text(text = "⬆️", fontSize = 16.sp)
+                            }
+                        }
+
+                        HorizontalDivider(color = Color(0xFFD0DEDD).copy(alpha = 0.3f))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.refreshCloudBackups() }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "تحديث أرشيف النسخ السحابية",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "مزامنة وجلب قائمة ملفات النسخ السحابية المتوفرة حالياً من درايف",
+                                    fontSize = 10.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                            Text(text = "🔄", fontSize = 16.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+        Text(text = "🗄️ النسخ الاحتياطية المتوفرة للاسترجاع (تاريخ ملخص)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+        Spacer(modifier = Modifier.height(6.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, Color(0xFFD0DEDD))
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (availableBackups.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "لا توجد نسخ احتياطية متوفرة حالياً داخل مجلد التطبيق.\nاضغط على (إنشاء نسخة احتياطية للجهاز الآن) بالأعلى لتوليد ملف فوري.",
+                            fontSize = 11.sp,
+                            color = Color.Gray,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 14.dp)
+                        )
+                    }
+                } else {
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = "انقر هنا لاختيار نسخة واستعادتها (${availableBackups.size} نسخة متوفرة)",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("أرشيف النسخ الاحتياطية المتوفرة") },
+                            leadingIcon = { Text("🗄️", modifier = Modifier.padding(start = 8.dp)) },
+                            trailingIcon = { Icon(Icons.Default.ArrowDropDown, null) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = Color(0xFFD0DEDD)
+                            )
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { backupsDropdownExpanded = true }
+                        )
+                        DropdownMenu(
+                            expanded = backupsDropdownExpanded,
+                            onDismissRequest = { backupsDropdownExpanded = false },
+                            modifier = Modifier.fillMaxWidth(0.9f)
+                        ) {
+                            availableBackups.forEach { backup ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("📅 ", fontSize = 11.sp)
+                                                    Text(text = backup.dateDisplay, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                                }
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("🏢 ", fontSize = 10.sp)
+                                                    Text(text = "منشأة: ${backup.companyName} (${backup.companyId})", fontSize = 10.sp, color = Color.Gray)
+                                                }
+                                            }
+                                            
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                // Quick Custom Button to restore
+                                                Box(
+                                                    modifier = Modifier
+                                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
+                                                        .clickable {
+                                                            backupsDropdownExpanded = false
+                                                            backupToRestoreItem = backup
+                                                        }
+                                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                                ) {
+                                                    Text("استعادة 🔄", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                }
+
+                                                // Quick Custom Button to delete
+                                                Box(
+                                                    modifier = Modifier
+                                                        .background(Color(0xFFFFEBEE), RoundedCornerShape(6.dp))
+                                                        .clickable {
+                                                            backupsDropdownExpanded = false
+                                                            backupToDeleteItem = backup
+                                                        }
+                                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                                ) {
+                                                    Text("حذف 🗑️", color = Color(0xFFC62828), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        backupsDropdownExpanded = false
+                                        backupToRestoreItem = backup
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isGoogleDriveLinked) {
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(text = "☁️ أرشيف النسخ الاحتياطية السحابية (على Google Drive)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+            Spacer(modifier = Modifier.height(6.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, Color(0xFFD0DEDD))
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (cloudBackups.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                if (isLoadingCloudBackups) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(24.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                }
+                                Text(
+                                    text = if (isLoadingCloudBackups) "جاري جلب النسخ الاحتياطية من Google Drive..." else "لا توجد نسخ احتياطية متوفرة حالياً في مساحتك السحابية لـ Google Drive.\nيمكنك الضغط على (رفع نسخة سحابية حية الآن) بالأعلى لتوليد نسخة سحابية فورية.",
+                                    fontSize = 11.sp,
+                                    color = Color.Gray,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 14.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = "انقر هنا لاختيار نسخة سحابية واستعادتها (${cloudBackups.size} نسخة متوفرة)",
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("أرشيف النسخ السحابية المتوفرة") },
+                                leadingIcon = { Text("☁️", modifier = Modifier.padding(start = 8.dp)) },
+                                trailingIcon = { Icon(Icons.Default.ArrowDropDown, null) },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                    unfocusedBorderColor = Color(0xFFD0DEDD)
+                                )
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clickable { cloudBackupsDropdownExpanded = true }
+                            )
+                            DropdownMenu(
+                                expanded = cloudBackupsDropdownExpanded,
+                                onDismissRequest = { cloudBackupsDropdownExpanded = false },
+                                modifier = Modifier.fillMaxWidth(0.9f)
+                            ) {
+                                cloudBackups.forEach { backup ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text("📅 ", fontSize = 11.sp)
+                                                        Text(text = backup.dateDisplay, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                                    }
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text("🏢 ", fontSize = 10.sp)
+                                                        Text(text = "منشأة: ${backup.companyName} (${backup.companyId})", fontSize = 10.sp, color = Color.Gray)
+                                                    }
+                                                }
+                                                
+                                                Row(
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    // Quick Button to Restore from Cloud
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
+                                                            .clickable {
+                                                                cloudBackupsDropdownExpanded = false
+                                                                cloudBackupToRestoreItem = backup
+                                                            }
+                                                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                                                    ) {
+                                                        Text("استعادة 🔄", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                    }
+
+                                                    // Quick Button to delete from Cloud
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .background(Color(0xFFFFEBEE), RoundedCornerShape(6.dp))
+                                                            .clickable {
+                                                                cloudBackupsDropdownExpanded = false
+                                                                cloudBackupToDeleteItem = backup
+                                                            }
+                                                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                                                    ) {
+                                                        Text("حذف 🗑️", color = Color(0xFFC62828), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            cloudBackupsDropdownExpanded = false
+                                            cloudBackupToRestoreItem = backup
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2589,6 +3050,134 @@ fun SettingsTabScreen(viewModel: AppViewModel) {
                     Text(text = "🗑️", fontSize = 20.sp, modifier = Modifier.padding(start = 8.dp))
                 }
             }
+        }
+
+        // --- Backup Restore Dialog Overlay ---
+        backupToRestoreItem?.let { backup ->
+            AlertDialog(
+                onDismissRequest = { backupToRestoreItem = null },
+                title = {
+                    Text(text = "🔄 تأكيد استعادة النسخة الاحتياطية", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                },
+                text = {
+                    Text(
+                        text = "هل أنت متأكد من استعادة النسخة الاحتياطية للشركة '${backup.companyName}' بتاريخ '${backup.dateDisplay}'؟\n\nتنبيه هام ⚠️: سيتم استبدال قاعدة البيانات الفعالة حالياً بشكل كامل وتحميل البيانات المسترجعة فوراً. يرجى التأكد من حفظ أي تغييرات قبل الاستمرار.",
+                        fontSize = 13.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.restoreDatabase(backup.file)
+                            backupToRestoreItem = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("نعم، استعادة 🔄", fontSize = 12.sp)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { backupToRestoreItem = null }) {
+                        Text("إلغاء", fontSize = 12.sp)
+                    }
+                }
+            )
+        }
+
+        // --- Backup Delete Dialog Overlay ---
+        backupToDeleteItem?.let { backup ->
+            AlertDialog(
+                onDismissRequest = { backupToDeleteItem = null },
+                title = {
+                    Text(text = "🗑️ تأكيد حذف نسخة احتياطية", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                },
+                text = {
+                    Text(
+                        text = "هل أنت متأكد من حذف ملف النسخة الاحتياطية للشركة '${backup.companyName}' بتاريخ '${backup.dateDisplay}' نهائياً من الجهاز؟\n\nلا يمكن التراجع عن هذا الإجراء بعد الحذف.",
+                        fontSize = 13.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.deleteBackup(backup)
+                            backupToDeleteItem = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+                    ) {
+                        Text("حذف نهائي 🗑️", fontSize = 12.sp, color = Color.White)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { backupToDeleteItem = null }) {
+                        Text("إلغاء", fontSize = 12.sp)
+                    }
+                }
+            )
+        }
+
+        // --- Cloud Backup Restore Dialog Overlay ---
+        cloudBackupToRestoreItem?.let { cloudBackup ->
+            AlertDialog(
+                onDismissRequest = { cloudBackupToRestoreItem = null },
+                title = {
+                    Text(text = "🔄 تأكيد استعادة النسخة السحابية", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                },
+                text = {
+                    Text(
+                        text = "هل أنت متأكد من تنزيل واستعادة النسخة الاحتياطية السحابية للشركة '${cloudBackup.companyName}' بتاريخ '${cloudBackup.dateDisplay}' منسابقة لجهازك؟\n\nتنبيه هام ⚠️: سيتم استبدال البيانات الحالية على هذا الجهاز فوراً ببيانات النسخة الاحتياطية السحابية التي تم تنزيلها. يرجى حفظ أي بيانات هامة أولاً.",
+                        fontSize = 13.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.restoreDbFromCloud(cloudBackup)
+                            cloudBackupToRestoreItem = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("نعم، استعادة سحابية ☁️", fontSize = 12.sp)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { cloudBackupToRestoreItem = null }) {
+                        Text("إلغاء", fontSize = 12.sp)
+                    }
+                }
+            )
+        }
+
+        // --- Cloud Backup Delete Dialog Overlay ---
+        cloudBackupToDeleteItem?.let { cloudBackup ->
+            AlertDialog(
+                onDismissRequest = { cloudBackupToDeleteItem = null },
+                title = {
+                    Text(text = "🗑️ تأكيد حذف نسخة سحابية", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                },
+                text = {
+                    Text(
+                        text = "هل أنت متأكد من حذف ملف النسخة الاحتياطية السحابية للشركة '${cloudBackup.companyName}' بتاريخ '${cloudBackup.dateDisplay}' نهائياً من حساب Google Drive الخاص بك؟\n\nتنبيه هام ⚠️: سيتم محو هذا الملف من خوادم السحابة نهائياً ولا يمكن التراجع عن هذا الإجراء بعد الحذف.",
+                        fontSize = 13.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.deleteCloudBackup(cloudBackup)
+                            cloudBackupToDeleteItem = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+                    ) {
+                        Text("نعم، حذف نهائي 🗑️", fontSize = 12.sp, color = Color.White)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { cloudBackupToDeleteItem = null }) {
+                        Text("إلغاء", fontSize = 12.sp)
+                    }
+                }
+            )
         }
 
         Spacer(modifier = Modifier.height(100.dp))

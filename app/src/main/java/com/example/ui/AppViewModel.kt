@@ -72,6 +72,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         loadCompaniesFromPrefs()
+        refreshBackupList()
+        initializeGoogleDrive()
     }
 
     private fun parseCompanyStr(str: String): CompanyInfo {
@@ -1133,6 +1135,505 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
         } catch (e: Exception) {
             emptyList()
+        }
+    }
+
+    // --- Google Drive Backup & Restore Integrations ---
+    private val _googleAccountEmail = MutableStateFlow<String?>(null)
+    val googleAccountEmail: StateFlow<String?> = _googleAccountEmail.asStateFlow()
+
+    private val _isGoogleDriveLinked = MutableStateFlow(false)
+    val isGoogleDriveLinked: StateFlow<Boolean> = _isGoogleDriveLinked.asStateFlow()
+
+    private val _cloudBackups = MutableStateFlow<List<GoogleDriveHelper.CloudBackupItem>>(emptyList())
+    val cloudBackups: StateFlow<List<GoogleDriveHelper.CloudBackupItem>> = _cloudBackups.asStateFlow()
+
+    private val _isLoadingCloudBackups = MutableStateFlow(false)
+    val isLoadingCloudBackups: StateFlow<Boolean> = _isLoadingCloudBackups.asStateFlow()
+
+    private val _isSyncingToCloud = MutableStateFlow(false)
+    val isSyncingToCloud: StateFlow<Boolean> = _isSyncingToCloud.asStateFlow()
+
+    private val _googleAuthIntentToResolve = MutableStateFlow<android.content.Intent?>(null)
+    val googleAuthIntentToResolve: StateFlow<android.content.Intent?> = _googleAuthIntentToResolve.asStateFlow()
+
+    val googleDriveAuthCallback = object : GoogleDriveHelper.AuthCallback {
+        override fun onAuthRequired(intent: android.content.Intent) {
+            _googleAuthIntentToResolve.value = intent
+        }
+        override fun onError(message: String) {
+            triggerToast(message)
+        }
+    }
+
+    fun clearGoogleAuthIntent() {
+        _googleAuthIntentToResolve.value = null
+    }
+
+    fun initializeGoogleDrive() {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val account = com.google.android.gms.auth.api.signin.GoogleSignIn.getLastSignedInAccount(app)
+                if (account != null && account.email != null) {
+                    _googleAccountEmail.value = account.email
+                    _isGoogleDriveLinked.value = true
+                    refreshCloudBackups()
+                } else {
+                    _googleAccountEmail.value = null
+                    _isGoogleDriveLinked.value = false
+                    _cloudBackups.value = emptyList()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun linkGoogleAccount(account: com.google.android.gms.auth.api.signin.GoogleSignInAccount) {
+        viewModelScope.launch {
+            if (account.email != null) {
+                _googleAccountEmail.value = account.email
+                _isGoogleDriveLinked.value = true
+                triggerToast("تم ربط حسابك ${account.email} بنجاح!")
+                refreshCloudBackups()
+            }
+        }
+    }
+
+    fun unlinkGoogleAccount() {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val gso = com.google.android.gms.auth.api.signin.GoogleSignInOptions.Builder(
+                    com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN
+                ).build()
+                val client = com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(app, gso)
+                client.signOut().addOnCompleteListener {
+                    _googleAccountEmail.value = null
+                    _isGoogleDriveLinked.value = false
+                    _cloudBackups.value = emptyList()
+                    triggerToast("تم تسجيل الخروج وفصل حساب Google Drive بنجاح.")
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _googleAccountEmail.value = null
+                _isGoogleDriveLinked.value = false
+                _cloudBackups.value = emptyList()
+            }
+        }
+    }
+
+    fun refreshCloudBackups() {
+        val email = _googleAccountEmail.value ?: return
+        viewModelScope.launch {
+            _isLoadingCloudBackups.value = true
+            try {
+                val list = GoogleDriveHelper.listBackups(
+                    context = getApplication(),
+                    accountEmail = email,
+                    callback = googleDriveAuthCallback
+                )
+                _cloudBackups.value = list
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                _isLoadingCloudBackups.value = false
+            }
+        }
+    }
+
+    fun backupCurrentDbToCloud() {
+        val email = _googleAccountEmail.value
+        if (email == null) {
+            triggerToast("برجاء ربط حساب Google Drive أولاً للحفظ السحابي.")
+            return
+        }
+
+        viewModelScope.launch {
+            _isSyncingToCloud.value = true
+            _isLoadingCloudBackups.value = true
+            try {
+                val app = getApplication<Application>()
+                val currentCompanyId = _activeCompanyId.value
+                val currentCompanyName = _companyName.value
+
+                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US)
+                val timestamp = sdf.format(java.util.Date())
+
+                val dbFileName = "company_$currentCompanyId.db"
+                val dbFile = app.getDatabasePath(dbFileName)
+
+                if (!dbFile.exists()) {
+                    triggerToast("لا يوجد قاعدة بيانات حالية لنسخها سحابياً.")
+                    return@launch
+                }
+
+                val cleanCompanyName = currentCompanyName.replace("/", "_").replace("\\", "_").replace(" ", "_")
+                val backupFileName = "Backup_${cleanCompanyName}_${currentCompanyId}_${timestamp}.db"
+
+                val success = GoogleDriveHelper.uploadFile(
+                    context = app,
+                    accountEmail = email,
+                    file = dbFile,
+                    remoteName = backupFileName,
+                    callback = googleDriveAuthCallback
+                )
+
+                if (success) {
+                    triggerToast("تم رفع النسخة الاحتياطية بنجاح إلى حسابك المتصل على Google Drive ☁️")
+                    refreshCloudBackups()
+                } else {
+                    triggerToast("فشل رفع النسخة الاحتياطية سحابياً")
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                triggerToast("خطأ أثناء الرفع السحابي: ${e.message}")
+            } finally {
+                _isSyncingToCloud.value = false
+                _isLoadingCloudBackups.value = false
+            }
+        }
+    }
+
+    fun restoreDbFromCloud(cloudItem: GoogleDriveHelper.CloudBackupItem) {
+        val email = _googleAccountEmail.value ?: return
+        viewModelScope.launch {
+            _isSyncingToCloud.value = true
+            try {
+                val app = getApplication<Application>()
+                
+                // We download the cloud file temporarily, then restore it using standard restoreDatabase
+                val tempDir = app.cacheDir
+                val tempFile = java.io.File(tempDir, cloudItem.name)
+                
+                val success = GoogleDriveHelper.downloadFile(
+                    context = app,
+                    accountEmail = email,
+                    fileId = cloudItem.id,
+                    destFile = tempFile,
+                    callback = googleDriveAuthCallback
+                )
+
+                if (success && tempFile.exists()) {
+                    // Call our local restore method!
+                    val restoreSuccess = restoreDatabase(tempFile)
+                    tempFile.delete() // clean up
+                    if (restoreSuccess) {
+                        triggerToast("تم تنزيل واستعادة النسخة الاحتياطية السحابية بنجاح 🔄")
+                    }
+                } else {
+                    triggerToast("فشل تنزيل ملف النسخة الاحتياطية من Google Drive")
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                triggerToast("خطأ أثناء الاستعادة السحابية: ${e.message}")
+            } finally {
+                _isSyncingToCloud.value = false
+            }
+        }
+    }
+
+    fun deleteCloudBackup(cloudItem: GoogleDriveHelper.CloudBackupItem) {
+        val email = _googleAccountEmail.value ?: return
+        viewModelScope.launch {
+            _isLoadingCloudBackups.value = true
+            try {
+                val success = GoogleDriveHelper.deleteFile(
+                    context = getApplication(),
+                    accountEmail = email,
+                    fileId = cloudItem.id,
+                    callback = googleDriveAuthCallback
+                )
+                if (success) {
+                    triggerToast("تم حذف النسخة الاحتياطية السحابية نهائياً بنجاح 🗑️")
+                    refreshCloudBackups()
+                } else {
+                    triggerToast("فشل حذف النسخة الاحتياطية السحابية")
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                triggerToast("خطأ أثناء الحذف السحابي: ${e.message}")
+            } finally {
+                _isLoadingCloudBackups.value = false
+            }
+        }
+    }
+
+    // --- Backup & Restore Infrastructure ---
+
+    data class BackupItem(
+        val file: java.io.File,
+        val companyName: String,
+        val companyId: String,
+        val dateDisplay: String,
+        val timestamp: String
+    )
+
+    private val _availableBackups = MutableStateFlow<List<BackupItem>>(emptyList())
+    val availableBackups: StateFlow<List<BackupItem>> = _availableBackups.asStateFlow()
+
+    fun refreshBackupList() {
+        try {
+            val app = getApplication<Application>()
+            val internalBackupDir = app.getExternalFilesDir("Backups") ?: java.io.File(app.filesDir, "Backups")
+            val filesList = mutableListOf<BackupItem>()
+
+            // Read from internal app directory (always safe & permission-free)
+            if (internalBackupDir.exists()) {
+                internalBackupDir.listFiles { _, name -> name.startsWith("Backup_") && name.endsWith(".db") }?.forEach { file ->
+                    val item = parseBackupFile(file)
+                    if (item != null) filesList.add(item)
+                }
+            }
+
+            // Read from public directory downloads/SmartAccountant_Backups
+            try {
+                val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                val externalBackupDir = java.io.File(downloadDir, "SmartAccountant_Backups")
+                if (externalBackupDir.exists()) {
+                    externalBackupDir.listFiles { _, name -> name.startsWith("Backup_") && name.endsWith(".db") }?.forEach { file ->
+                        val item = parseBackupFile(file)
+                        if (item != null && !filesList.any { it.file.name == file.name }) {
+                            filesList.add(item)
+                        }
+                    }
+                }
+            } catch (ex: Exception) {
+                // Ignore download reading restrictions if blocked by Android OS
+            }
+
+            // Sort newest first
+            filesList.sortByDescending { it.timestamp }
+            _availableBackups.value = filesList
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun parseBackupFile(file: java.io.File): BackupItem? {
+        return try {
+            val fileName = file.name
+            val nameWithoutExt = fileName.substringBeforeLast(".")
+            val parts = nameWithoutExt.split("_")
+            if (parts.size < 4) return null
+
+            var dateIndex = -1
+            for (i in parts.indices) {
+                if (parts[i].matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) {
+                    dateIndex = i
+                    break
+                }
+            }
+            if (dateIndex == -1 || dateIndex < 2) return null
+
+            val companyId = parts[dateIndex - 1]
+            val companyNameParsed = parts.subList(1, dateIndex - 1).joinToString(" ").replace("_", " ")
+            val datePart = parts[dateIndex]
+            val timePart = if (dateIndex + 1 < parts.size) parts[dateIndex + 1] else ""
+
+            val displayTime = if (timePart.isNotBlank()) {
+                val subTime = timePart.replace("-", ":")
+                "$datePart | $subTime"
+            } else {
+                datePart
+            }
+
+            val rawTimestamp = "${datePart}_${timePart}"
+            BackupItem(file, companyNameParsed, companyId, displayTime, rawTimestamp)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun backupCurrentDatabase(): Boolean {
+        return try {
+            val app = getApplication<Application>()
+            val currentCompanyId = _activeCompanyId.value
+            val currentCompanyName = _companyName.value
+
+            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US)
+            val timestamp = sdf.format(java.util.Date())
+
+            val dbFileName = "company_$currentCompanyId.db"
+            val dbFile = app.getDatabasePath(dbFileName)
+
+            if (!dbFile.exists()) {
+                triggerToast("لا يوجد ملف قاعدة بيانات حالي للنسخ في الوقت الحالي.")
+                return false
+            }
+
+            val internalBackupDir = app.getExternalFilesDir("Backups") ?: java.io.File(app.filesDir, "Backups")
+            if (!internalBackupDir.exists()) internalBackupDir.mkdirs()
+
+            val cleanCompanyName = currentCompanyName.replace("/", "_").replace("\\", "_").replace(" ", "_")
+            val backupFileNamePattern = "Backup_${cleanCompanyName}_${currentCompanyId}_${timestamp}"
+
+            // Copy to Internal Sandboxed storage
+            val destDbFileInternal = java.io.File(internalBackupDir, "$backupFileNamePattern.db")
+            dbFile.copyTo(destDbFileInternal, overwrite = true)
+
+            val walFile = java.io.File(dbFile.parent, "$dbFileName-wal")
+            if (walFile.exists()) {
+                val destWalFileInternal = java.io.File(internalBackupDir, "$backupFileNamePattern.db-wal")
+                walFile.copyTo(destWalFileInternal, overwrite = true)
+            }
+            val shmFile = java.io.File(dbFile.parent, "$dbFileName-shm")
+            if (shmFile.exists()) {
+                val destShmFileInternal = java.io.File(internalBackupDir, "$backupFileNamePattern.db-shm")
+                shmFile.copyTo(destShmFileInternal, overwrite = true)
+            }
+
+            // Copy to Shared Download folder for absolute visibility to the user under "SmartAccountant_Backups"
+            try {
+                val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                val externalBackupDir = java.io.File(downloadDir, "SmartAccountant_Backups")
+                if (!externalBackupDir.exists()) externalBackupDir.mkdirs()
+
+                val destDbFileExternal = java.io.File(externalBackupDir, "$backupFileNamePattern.db")
+                dbFile.copyTo(destDbFileExternal, overwrite = true)
+
+                if (walFile.exists()) {
+                    val destWalFileExternal = java.io.File(externalBackupDir, "$backupFileNamePattern.db-wal")
+                    walFile.copyTo(destWalFileExternal, overwrite = true)
+                }
+                if (shmFile.exists()) {
+                    val destShmFileExternal = java.io.File(externalBackupDir, "$backupFileNamePattern.db-shm")
+                    shmFile.copyTo(destShmFileExternal, overwrite = true)
+                }
+            } catch (ex: Exception) {
+                // Secondary directory file copy skipped if forbidden by partition Scoped Storage rules
+            }
+
+            refreshBackupList()
+            triggerToast("تم إنشاء نسخة احتياطية محلية باسم: $backupFileNamePattern في مجلد التطبيق.")
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            triggerToast("خطأ أثناء إنشاء النسخة الاحتياطية: ${e.message}")
+            false
+        }
+    }
+
+    fun restoreDatabase(backupFile: java.io.File): Boolean {
+        return try {
+            val app = getApplication<Application>()
+            val fileName = backupFile.name
+            if (!fileName.startsWith("Backup_") || !fileName.endsWith(".db")) {
+                triggerToast("اسم ملف النسخة الاحتياطية غير صالح!")
+                return false
+            }
+
+            val nameWithoutExt = fileName.substringBeforeLast(".")
+            val parts = nameWithoutExt.split("_")
+            if (parts.size < 4) {
+                triggerToast("اسم ملف النسخة غير مطابق للنموذج المعتمد!")
+                return false
+            }
+
+            var dateIndex = -1
+            for (i in parts.indices) {
+                if (parts[i].matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) {
+                    dateIndex = i
+                    break
+                }
+            }
+
+            if (dateIndex == -1 || dateIndex < 2) {
+                triggerToast("صيغة تاريخ النسخة الاحتياطية غير مدعومة!")
+                return false
+            }
+
+            val companyId = parts[dateIndex - 1]
+            val companyNameParsed = parts.subList(1, dateIndex - 1).joinToString(" ").replace("_", " ")
+
+            val dbFileName = "company_$companyId.db"
+            val targetDbFile = app.getDatabasePath(dbFileName)
+
+            // 1. Close database gracefully
+            AppDatabase.closeAndRemoveDatabase("company_$companyId")
+
+            // 2. Clear old transactional log files
+            val targetWalFile = java.io.File(targetDbFile.parent, "$dbFileName-wal")
+            if (targetWalFile.exists()) targetWalFile.delete()
+            val targetShmFile = java.io.File(targetDbFile.parent, "$dbFileName-shm")
+            if (targetShmFile.exists()) targetShmFile.delete()
+
+            // 3. Copy DB and WAL/SHM backups
+            backupFile.copyTo(targetDbFile, overwrite = true)
+
+            val backupParentDir = backupFile.parentFile
+            val backupWal = java.io.File(backupParentDir, "$nameWithoutExt.db-wal")
+            if (backupWal.exists()) {
+                val destWal = java.io.File(targetDbFile.parent, "$dbFileName-wal")
+                backupWal.copyTo(destWal, overwrite = true)
+            }
+
+            val backupShm = java.io.File(backupParentDir, "$nameWithoutExt.db-shm")
+            if (backupShm.exists()) {
+                val destShm = java.io.File(targetDbFile.parent, "$dbFileName-shm")
+                backupShm.copyTo(destShm, overwrite = true)
+            }
+
+            // 4. Ensure company exists in preferences metadata
+            val list = _companiesList.value.toMutableList()
+            if (!list.any { it.id == companyId }) {
+                val newComp = CompanyInfo(companyId, companyNameParsed, "", "", "ل.س")
+                list.add(newComp)
+                _companiesList.value = list
+                val savedStr = list.joinToString(";;") { serializeCompany(it) }
+                prefs.edit().putString("companies_list", savedStr).apply()
+            }
+
+            // 5. Instantly switch to the restored company DB
+            switchCompanyDb(companyId, companyNameParsed)
+
+            triggerToast("تمت استعادة النسخة الاحتياطية بنجاح للشركة: $companyNameParsed")
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            triggerToast("فشلت استعادة النسخة: ${e.message}")
+            false
+        }
+    }
+
+    fun deleteBackup(backupItem: BackupItem): Boolean {
+        return try {
+            val file = backupItem.file
+            val parent = file.parentFile
+            val nameNoExt = file.name.substringBeforeLast(".")
+
+            if (file.exists()) file.delete()
+
+            val wal = java.io.File(parent, "$nameNoExt.db-wal")
+            if (wal.exists()) wal.delete()
+            val shm = java.io.File(parent, "$nameNoExt.db-shm")
+            if (shm.exists()) shm.delete()
+
+            // Delete mirror too
+            try {
+                val app = getApplication<Application>()
+                val internalBackupDir = app.getExternalFilesDir("Backups") ?: java.io.File(app.filesDir, "Backups")
+                val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                val externalBackupDir = java.io.File(downloadDir, "SmartAccountant_Backups")
+
+                val peerDir = if (parent.absolutePath.contains("Backups")) externalBackupDir else internalBackupDir
+                val peerFile = java.io.File(peerDir, file.name)
+                if (peerFile.exists()) peerFile.delete()
+
+                val peerWal = java.io.File(peerDir, "$nameNoExt.db-wal")
+                if (peerWal.exists()) peerWal.delete()
+                val peerShm = java.io.File(peerDir, "$nameNoExt.db-shm")
+                if (peerShm.exists()) peerShm.delete()
+            } catch (ex: Exception) {}
+
+            refreshBackupList()
+            triggerToast("تم حذف النسخة الاحتياطية بنجاح.")
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            triggerToast("فشل حذف الملف: ${e.message}")
+            false
         }
     }
 }
