@@ -61,6 +61,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private var activeCollectionJob: kotlinx.coroutines.Job? = null
 
+    fun getTodayDateStr(): String {
+        return try {
+            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+            sdf.format(java.util.Date())
+        } catch (e: Exception) {
+            "2026-05-31"
+        }
+    }
+
     init {
         loadCompaniesFromPrefs()
     }
@@ -376,15 +385,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         invoicePaymentType.value = invoice.paymentType
         invoicePaidAmount.value = if (invoice.paidAmount > 0.0) invoice.paidAmount.toInt().toString() else ""
         invoiceDiscount.value = if (invoice.discount > 0.0) invoice.discount.toInt().toString() else ""
-        invoiceTax.value = if (invoice.tax > 0.0) invoice.tax.toInt().toString() else ""
-        tempInvoiceItems.value = deserializeItems(invoice.itemsJson)
+        
+        val itemsList = deserializeItems(invoice.itemsJson)
+        val subtotal = itemsList.sumOf { it.qty * it.price }
+        val netAmount = subtotal - (invoice.discount)
+        val computedTaxPercent = if (netAmount > 0.0) {
+            (invoice.tax / netAmount) * 100.0
+        } else {
+            0.0
+        }
+        invoiceTax.value = if (computedTaxPercent > 0.0) {
+            if (computedTaxPercent % 1.0 == 0.0) {
+                computedTaxPercent.toInt().toString()
+            } else {
+                String.format(java.util.Locale.US, "%.1f", computedTaxPercent)
+            }
+        } else {
+            ""
+        }
+        
+        tempInvoiceItems.value = itemsList
     }
 
     fun clearInvoiceForm() {
         editingInvoice.value = null
         tempInvoiceItems.value = emptyList()
         selectedInvoiceCustomer.value = null
-        selectedInvoiceDate.value = "2026-05-30" // Default current local date
+        selectedInvoiceDate.value = getTodayDateStr() // Default current local date
         invoiceNotes.value = ""
         invoiceCurrency.value = "ل.س"
         invoiceType.value = "sale"
@@ -752,11 +779,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
         val subtotal = items.sumOf { it.qty * it.price }
         val discountVal = invoiceDiscount.value.toDoubleOrNull() ?: 0.0
-        val taxVal = invoiceTax.value.toDoubleOrNull() ?: 0.0
+        val taxPercent = invoiceTax.value.toDoubleOrNull() ?: 0.0
+        val taxVal = (subtotal - discountVal) * (taxPercent / 100.0)
         val total = subtotal - discountVal + taxVal
         val grossProfit = items.sumOf { it.qty * (it.price - it.cost) }
         val profit = grossProfit - discountVal
-        val dateVal = selectedInvoiceDate.value.ifBlank { "2026-05-30" }
+        val dateVal = selectedInvoiceDate.value.ifBlank { getTodayDateStr() }
 
         val invStr = serializeItems(items)
 
@@ -858,7 +886,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val dateVal = voucherDate.value.ifBlank { "2026-05-23" }
+        val dateVal = voucherDate.value.ifBlank { getTodayDateStr() }
 
         val newVoucher = Voucher(
             type = voucherType.value,

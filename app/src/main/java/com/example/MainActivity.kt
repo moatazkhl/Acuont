@@ -1443,7 +1443,7 @@ fun ReportsTabScreen(
 
     // 2. Aggregate sales, expense and profit converting each transaction with its day's exchange rate
     val totalSales = remember(filteredInvoices, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
-        filteredInvoices.filter { it.status == "saved" && it.type == "sale" }.sumOf { inv ->
+        filteredInvoices.filter { it.status == "saved" && (it.type == "sale" || it.type == "return" || it.type == "return_sale") }.sumOf { inv ->
             val rateDateObj = exchangeRatesList.find { it.date == inv.date }
             val factor = when (inv.currency) {
                 "USD" -> rateDateObj?.rateUSD ?: usdDefault
@@ -1452,12 +1452,13 @@ fun ReportsTabScreen(
                 "TRY" -> rateDateObj?.rateTRY ?: tryDefault
                 else -> 1.0
             }
-            inv.total * factor
+            val multiplier = if (inv.type == "sale") 1.0 else -1.0
+            inv.total * factor * multiplier
         }
     }
 
     val totalProfit = remember(filteredInvoices, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
-        filteredInvoices.filter { it.status == "saved" && it.type == "sale" }.sumOf { inv ->
+        filteredInvoices.filter { it.status == "saved" && (it.type == "sale" || it.type == "return" || it.type == "return_sale") }.sumOf { inv ->
             val rateDateObj = exchangeRatesList.find { it.date == inv.date }
             val factor = when (inv.currency) {
                 "USD" -> rateDateObj?.rateUSD ?: usdDefault
@@ -1466,22 +1467,27 @@ fun ReportsTabScreen(
                 "TRY" -> rateDateObj?.rateTRY ?: tryDefault
                 else -> 1.0
             }
-            inv.profit * factor
+            val multiplier = if (inv.type == "sale") 1.0 else -1.0
+            inv.profit * factor * multiplier
         }
     }
 
     val totalExpenses = remember(filteredVouchers, accounts, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
         filteredVouchers.filter { it.type == "payment" }.sumOf { v ->
             val acc = accounts.find { it.id == v.accountId }
-            val rateDateObj = exchangeRatesList.find { it.date == v.date }
-            val factor = when (acc?.currency) {
-                "USD" -> rateDateObj?.rateUSD ?: usdDefault
-                "EUR" -> rateDateObj?.rateEUR ?: eurDefault
-                "SAR" -> rateDateObj?.rateSAR ?: sarDefault
-                "TRY" -> rateDateObj?.rateTRY ?: tryDefault
-                else -> 1.0
+            if (acc?.type == "expense") {
+                val rateDateObj = exchangeRatesList.find { it.date == v.date }
+                val factor = when (acc.currency) {
+                    "USD" -> rateDateObj?.rateUSD ?: usdDefault
+                    "EUR" -> rateDateObj?.rateEUR ?: eurDefault
+                    "SAR" -> rateDateObj?.rateSAR ?: sarDefault
+                    "TRY" -> rateDateObj?.rateTRY ?: tryDefault
+                    else -> 1.0
+                }
+                v.amount * factor
+            } else {
+                0.0
             }
-            v.amount * factor
         }
     }
 
@@ -3274,7 +3280,7 @@ fun NewInvoiceDialog(
                             OutlinedTextField(
                                 value = taxStr,
                                 onValueChange = { viewModel.invoiceTax.value = it },
-                                label = { Text("ضريبة الفاتورة ($activeCurrency)") },
+                                label = { Text("الضريبة المضافة (%)") },
                                 placeholder = { Text("0") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 modifier = Modifier.weight(1f),
@@ -3287,7 +3293,8 @@ fun NewInvoiceDialog(
                     // Sub totals summary card in arabic
                     item {
                         val discountVal = viewModel.invoiceDiscount.collectAsState().value.toDoubleOrNull() ?: 0.0
-                        val taxVal = viewModel.invoiceTax.collectAsState().value.toDoubleOrNull() ?: 0.0
+                        val taxPercent = viewModel.invoiceTax.collectAsState().value.toDoubleOrNull() ?: 0.0
+                        val taxVal = (total - discountVal) * (taxPercent / 100.0)
                         val finalTotal = total - discountVal + taxVal
 
                         Card(
@@ -3309,7 +3316,7 @@ fun NewInvoiceDialog(
                                 if (taxVal > 0.0) {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text(text = "الضريبة المضافة:", fontSize = 12.sp, color = Color(0xFF2E86C1))
+                                        Text(text = "الضريبة المضافة ($taxPercent%):", fontSize = 12.sp, color = Color(0xFF2E86C1))
                                         Text(text = "+ ${viewModel.formatCurrency(taxVal)} $activeCurrency", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2E86C1))
                                     }
                                 }
@@ -3944,6 +3951,28 @@ fun NewVoucherDialog(viewModel: AppViewModel, onClose: () -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                Spacer(modifier = Modifier.height(10.dp))
+
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val voucherDateState by viewModel.voucherDate.collectAsState()
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = if (voucherDateState.isBlank()) viewModel.getTodayDateStr() else voucherDateState,
+                        onValueChange = {},
+                        label = { Text("تاريخ السند (YYYY-MM-DD)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        readOnly = true,
+                        trailingIcon = { Icon(imageVector = Icons.Default.DateRange, contentDescription = null) }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable {
+                                showDatePicker(context) { viewModel.voucherDate.value = it }
+                            }
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -4247,7 +4276,7 @@ fun ReportDetailsDialog(
     }
 
     val totalSales = remember(filteredInvoices, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
-        filteredInvoices.filter { it.status == "saved" && it.type == "sale" }.sumOf { inv ->
+        filteredInvoices.filter { it.status == "saved" && (it.type == "sale" || it.type == "return" || it.type == "return_sale") }.sumOf { inv ->
             val rateDateObj = exchangeRatesList.find { it.date == inv.date }
             val factor = when (inv.currency) {
                 "USD" -> rateDateObj?.rateUSD ?: usdDefault
@@ -4256,12 +4285,13 @@ fun ReportDetailsDialog(
                 "TRY" -> rateDateObj?.rateTRY ?: tryDefault
                 else -> 1.0
             }
-            inv.total * factor
+            val multiplier = if (inv.type == "sale") 1.0 else -1.0
+            inv.total * factor * multiplier
         }
     }
 
     val totalProfit = remember(filteredInvoices, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
-        filteredInvoices.filter { it.status == "saved" && it.type == "sale" }.sumOf { inv ->
+        filteredInvoices.filter { it.status == "saved" && (it.type == "sale" || it.type == "return" || it.type == "return_sale") }.sumOf { inv ->
             val rateDateObj = exchangeRatesList.find { it.date == inv.date }
             val factor = when (inv.currency) {
                 "USD" -> rateDateObj?.rateUSD ?: usdDefault
@@ -4270,7 +4300,8 @@ fun ReportDetailsDialog(
                 "TRY" -> rateDateObj?.rateTRY ?: tryDefault
                 else -> 1.0
             }
-            inv.profit * factor
+            val multiplier = if (inv.type == "sale") 1.0 else -1.0
+            inv.profit * factor * multiplier
         }
     }
 
@@ -4301,6 +4332,25 @@ fun ReportDetailsDialog(
                 else -> 1.0
             }
             v.amount * factor
+        }
+    }
+
+    val totalExpenses = remember(filteredVouchers, accounts, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault) {
+        filteredVouchers.filter { it.type == "payment" }.sumOf { v ->
+            val acc = accounts.find { it.id == v.accountId }
+            if (acc?.type == "expense") {
+                val rateDateObj = exchangeRatesList.find { it.date == v.date }
+                val factor = when (acc.currency) {
+                    "USD" -> rateDateObj?.rateUSD ?: usdDefault
+                    "EUR" -> rateDateObj?.rateEUR ?: eurDefault
+                    "SAR" -> rateDateObj?.rateSAR ?: sarDefault
+                    "TRY" -> rateDateObj?.rateTRY ?: tryDefault
+                    else -> 1.0
+                }
+                v.amount * factor
+            } else {
+                0.0
+            }
         }
     }
 
@@ -4534,9 +4584,9 @@ fun ReportDetailsDialog(
                             }
                         }
                         "pl" -> {
-                            val cogs = totalSales * 0.70 // simulated COGS
-                            val grossProfit = totalSales - cogs
-                            val dynamicExpenses = if (totalPayments > 0.0) totalPayments else 125000.0
+                            val cogs = totalSales - totalProfit
+                            val grossProfit = totalProfit
+                            val dynamicExpenses = totalExpenses
                             val netProfit = grossProfit - dynamicExpenses
                             Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                                 Text(
@@ -4564,9 +4614,9 @@ fun ReportDetailsDialog(
 
                                 val plLines = listOf(
                                     Triple("إجمالي المبيعات المحققة", totalSales, Color(0xFF1A9A60)),
-                                    Triple("تكلفة البضاعة المباعة (تقديري)", -cogs, Color(0xFFE03C3C)),
+                                    Triple("تكلفة البضاعة المباعة (الرقم الفعلي)", -cogs, Color(0xFFE03C3C)),
                                     Triple("مجمل الربح الإجمالي", grossProfit, Color(0xFF1A9A60)),
-                                    Triple("المصاريف الإدارية أو سندات الصرف للفترة", -dynamicExpenses, Color(0xFFE03C3C)),
+                                    Triple("المصاريف التشغيلية الفعلية", -dynamicExpenses, Color(0xFFE03C3C)),
                                     Triple("صافي الدخل النهائي للفترة", netProfit, Color(0xFF1A9A60))
                                 )
 
@@ -4689,21 +4739,58 @@ fun ReportDetailsDialog(
                 // Footer Actions
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
-                        onClick = { viewModel.triggerToast("تم تصدير البيانات بنجاح كملف Excel") },
+                        onClick = {
+                            exportReportToExcel(
+                                context = context,
+                                type = type,
+                                title = title,
+                                startDate = startDate,
+                                endDate = endDate,
+                                companyName = viewModel.companyName.value,
+                                totalSales = totalSales,
+                                totalProfit = totalProfit,
+                                totalReceipts = totalReceipts,
+                                totalPayments = totalPayments,
+                                totalExpenses = totalExpenses,
+                                topProductsList = topProductsList,
+                                topCustomersList = topCustomersList,
+                                lowStockList = products.filter { it.qty <= it.minQty },
+                                filteredInvoices = filteredInvoices,
+                                filteredVouchers = filteredVouchers,
+                                accounts = accounts
+                            )
+                        },
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E7145))
                     ) {
-                        Text("طرد التصدير Excel")
+                        Text("تصدير Excel 📊")
                     }
                     Button(
                         onClick = {
-                            viewModel.triggerToast("جاري حفظ التقرير PDF بهاتفك...")
-                            onClose()
+                            printReport(
+                                context = context,
+                                type = type,
+                                title = title,
+                                startDate = startDate,
+                                endDate = endDate,
+                                companyName = viewModel.companyName.value,
+                                totalSales = totalSales,
+                                totalProfit = totalProfit,
+                                totalReceipts = totalReceipts,
+                                totalPayments = totalPayments,
+                                totalExpenses = totalExpenses,
+                                topProductsList = topProductsList,
+                                topCustomersList = topCustomersList,
+                                lowStockList = products.filter { it.qty <= it.minQty },
+                                filteredInvoices = filteredInvoices,
+                                filteredVouchers = filteredVouchers,
+                                accounts = accounts
+                            )
                         },
                         modifier = Modifier.weight(1.5f),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
-                        Text("طباعة تقرير PDF")
+                        Text("طباعة تقرير PDF 🖨️")
                     }
                 }
             }
@@ -4725,19 +4812,123 @@ fun showDatePicker(context: android.content.Context, onDateSelected: (String) ->
     }, year, month, day).show()
 }
 
+// --- Helper class for Account Statement detailed ledger rows ---
+data class LedgerRow(
+    val date: String,
+    val desc: String,
+    val amount: Double,
+    val runningBalance: Double
+)
+
 // --- Account Statement (كشف الحساب المحاسبي) dialog ---
 @Composable
 fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: () -> Unit, onAddVoucher: (String) -> Unit) {
     val invoices by viewModel.invoices.collectAsState()
     val vouchers by viewModel.vouchers.collectAsState()
+    val exchangeRatesList by viewModel.exchangeRates.collectAsState()
+    val usdDefault by viewModel.rateUSD.collectAsState()
+    val eurDefault by viewModel.rateEUR.collectAsState()
+    val sarDefault by viewModel.rateSAR.collectAsState()
+    val tryDefault by viewModel.rateTRY.collectAsState()
 
     val accountVouchers = vouchers.filter { it.accountId == account.id }
-    val accountInvs = invoices.filter { it.customer == account.name }
+    // Only include saved/posted invoices (ignore drafts)
+    val accountInvs = invoices.filter { it.customer == account.name && it.status == "saved" }
 
     var startDate by remember { mutableStateOf("") }
     var endDate by remember { mutableStateOf("") }
 
     val context = androidx.compose.ui.platform.LocalContext.current
+
+    val allTx = remember(accountInvs, accountVouchers, exchangeRatesList, usdDefault, eurDefault, sarDefault, tryDefault, account.currency) {
+        (
+        accountInvs.map { inv ->
+            val invoiceName = when (inv.type) {
+                "sale" -> "فاتورة مبيعات رقم ${inv.id}"
+                "purchase" -> "فاتورة مشتريات رقم ${inv.id}"
+                "return", "return_sale" -> "فاتورة مرتجع مبيعات رقم ${inv.id}"
+                "return_purchase" -> "فاتورة مرتجع مشتريات رقم ${inv.id}"
+                else -> "فاتورة رقم ${inv.id}"
+            }
+            val rawInvoiceVal = when (inv.type) {
+                "sale" -> -inv.total
+                "purchase" -> inv.total
+                "return", "return_sale" -> inv.total
+                "return_purchase" -> -inv.total
+                else -> 0.0
+            }
+            val historicalRate = exchangeRatesList.find { it.date == inv.date }
+            val activeUsd = historicalRate?.rateUSD ?: usdDefault
+            val activeEur = historicalRate?.rateEUR ?: eurDefault
+            val activeSar = historicalRate?.rateSAR ?: sarDefault
+            val activeTry = historicalRate?.rateTRY ?: tryDefault
+
+            val rateFrom = when (inv.currency) {
+                "USD" -> activeUsd
+                "EUR" -> activeEur
+                "SAR" -> activeSar
+                "TRY" -> activeTry
+                else -> 1.0
+            }
+            val rateTo = when (account.currency) {
+                "USD" -> activeUsd
+                "EUR" -> activeEur
+                "SAR" -> activeSar
+                "TRY" -> activeTry
+                else -> 1.0
+            }
+            val sypAmount = rawInvoiceVal * rateFrom
+            val amountInAccountCurrency = if (rateTo != 0.0) sypAmount / rateTo else sypAmount
+
+            Triple(inv.date, invoiceName, amountInAccountCurrency)
+        } +
+        accountVouchers.map { v ->
+            val prefixText = if (v.desc.isBlank()) {
+                if (v.type == "receipt") "سند قبض نقدي رقم ${v.id}" else "سند صرف نقدي رقم ${v.id}"
+            } else v.desc
+            Triple(v.date, prefixText, if (v.type == "receipt") v.amount else -v.amount)
+        }
+        )
+    }
+
+    val chronologicalTx = remember(allTx) {
+        allTx.sortedWith(compareBy<Triple<String, String, Double>> { it.first }.thenBy { it.second })
+    }
+
+    val txWithRunningBalance = remember(chronologicalTx) {
+        var currentRunning = 0.0
+        chronologicalTx.map { tx ->
+            currentRunning += tx.third
+            LedgerRow(
+                date = tx.first,
+                desc = tx.second,
+                amount = tx.third,
+                runningBalance = currentRunning
+            )
+        }
+    }
+
+    val filteredTx = remember(txWithRunningBalance, startDate, endDate) {
+        txWithRunningBalance.filter { tx ->
+            val afterStart = if (startDate.isBlank()) true else tx.date >= startDate
+            val beforeEnd = if (endDate.isBlank()) true else tx.date <= endDate
+            afterStart && beforeEnd
+        }.sortedByDescending { it.date }
+    }
+
+    val previousBalance = remember(chronologicalTx, startDate) {
+        if (startDate.isBlank()) 0.0
+        else chronologicalTx.filter { it.first < startDate }.sumOf { it.third }
+    }
+
+    val periodNet = remember(filteredTx) {
+        filteredTx.sumOf { it.amount }
+    }
+
+    val periodClosing = remember(previousBalance, periodNet, startDate, endDate) {
+        if (startDate.isBlank() && endDate.isBlank()) account.balance
+        else previousBalance + periodNet
+    }
 
     Dialog(onDismissRequest = { onClose() }) {
         Card(
@@ -4766,11 +4957,33 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
                 ) {
                     Column {
                         Text(text = "الاسم: ${account.name}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = "الرصيد الكلي الحالي:", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f))
-                        Text(text = "${viewModel.formatCurrency(Math.abs(account.balance))} ${account.currency}", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        val subtitle = if (account.balance > 0) "← مستحق للغير (له علينا)" else if (account.balance < 0) "← مستحق للشركة (عليه لنا)" else "الحساب متوازن"
-                        Text(text = subtitle, fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        
+                        if (startDate.isNotBlank() || endDate.isNotBlank()) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(text = "الرصيد السابق للمركز:", fontSize = 10.sp, color = Color.White.copy(alpha = 0.8f))
+                                    Text(text = "${viewModel.formatCurrency(previousBalance)} ${account.currency}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(text = "صافي حركة الفترة المحددة:", fontSize = 10.sp, color = Color.White.copy(alpha = 0.8f))
+                                    val prefix = if (periodNet > 0) "+" else ""
+                                    Text(text = "$prefix${viewModel.formatCurrency(periodNet)} ${account.currency}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.3f))
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(text = "الرصيد الختامي للفترة المحددة:", fontSize = 11.sp, color = Color.White.copy(alpha = 0.9f))
+                            Text(text = "${viewModel.formatCurrency(Math.abs(periodClosing))} ${account.currency}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            val periodSubtitle = if (periodClosing > 0) "← رصيد دائن للفترة (له علينا)" else if (periodClosing < 0) "← رصيد مدين للفترة (عليه لنا)" else "الحساب متوازن للفترة"
+                            Text(text = periodSubtitle, fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
+                        } else {
+                            Text(text = "الرصيد الكلي الإجمالي الحالي:", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f))
+                            Text(text = "${viewModel.formatCurrency(Math.abs(account.balance))} ${account.currency}", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            val subtitle = if (account.balance > 0) "← مستحق للغير (له علينا)" else if (account.balance < 0) "← مستحق للشركة (عليه لنا)" else "الحساب متوازن"
+                            Text(text = subtitle, fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
 
@@ -4840,21 +5053,6 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
                 Text(text = "حركات السجلات المالية المكتشفة", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.Gray)
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Combine ledger transactions into a list ordered by date
-                val rate = viewModel.getRateInSyp(account.currency)
-                val allTx = (
-                        accountInvs.map { Triple(it.date, "فاتورة مبيعات ${it.id}", if (rate != 0.0) -it.total / rate else -it.total) } +
-                        accountVouchers.map { Triple(it.date, it.desc, if (it.type == "receipt") it.amount else -it.amount) }
-                        ).sortedByDescending { it.first }
-
-                // Apply dynamic date filtering
-                val filteredTx = allTx.filter { tx ->
-                    val txDate = tx.first // "YYYY-MM-DD"
-                    val afterStart = if (startDate.isBlank()) true else txDate >= startDate
-                    val beforeEnd = if (endDate.isBlank()) true else txDate <= endDate
-                    afterStart && beforeEnd
-                }
-
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     if (filteredTx.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -4862,21 +5060,31 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
                         }
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(filteredTx) { item ->
-                                val (date, description, amount) = item
+                            items(filteredTx) { tx ->
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAF9)),
                                     border = BorderStroke(1.dp, Color(0xFFD0DEDD))
                                 ) {
                                     Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Column {
-                                            Text(text = description, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                            Text(text = date, fontSize = 10.sp, color = Color.Gray)
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(text = tx.desc, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                            ) {
+                                                Text(text = tx.date, fontSize = 10.sp, color = Color.Gray)
+                                                Text(
+                                                    text = "الرصيد الجاري: ${viewModel.formatCurrency(tx.runningBalance)} ${account.currency}",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
                                         }
-                                        val color = if (amount > 0) Color(0xFF2EBD7A) else Color(0xFFE03C3C)
-                                        val prefix = if (amount > 0) "+" else ""
-                                        Text(text = "$prefix${viewModel.formatCurrency(amount)} ${account.currency}", color = color, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                        val color = if (tx.amount > 0) Color(0xFF2EBD7A) else Color(0xFFE03C3C)
+                                        val prefix = if (tx.amount > 0) "+" else ""
+                                        Text(text = "$prefix${viewModel.formatCurrency(tx.amount)} ${account.currency}", color = color, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     }
                                 }
                             }
@@ -4897,9 +5105,12 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
                                 context = context,
                                 account = account,
                                 txList = filteredTx,
-                                companyName = "المحاسب الذكي - شركة المعتز",
+                                companyName = viewModel.companyName.value,
                                 startDate = startDate,
-                                endDate = endDate
+                                endDate = endDate,
+                                previousBalance = previousBalance,
+                                periodNet = periodNet,
+                                periodClosing = periodClosing
                             )
                         },
                         modifier = Modifier.weight(1.5f),
@@ -4915,7 +5126,10 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
                                 account = account,
                                 txList = filteredTx,
                                 startDate = startDate,
-                                endDate = endDate
+                                endDate = endDate,
+                                previousBalance = previousBalance,
+                                periodNet = periodNet,
+                                periodClosing = periodClosing
                             )
                         },
                         modifier = Modifier.weight(1.5f),
@@ -4956,14 +5170,29 @@ fun AccountStatementDialog(viewModel: AppViewModel, account: Account, onClose: (
     }
 }
 
+// Helper unwrapper to extract Activity from Context wrappers safely
+fun findActivity(context: android.content.Context): android.app.Activity? {
+    var ctx = context
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is android.app.Activity) {
+            return ctx
+        }
+        ctx = ctx.baseContext
+    }
+    return null
+}
+
 // System print web adapter helper for Account Statement
 fun printAccountStatement(
     context: android.content.Context, 
     account: Account, 
-    txList: List<Triple<String, String, Double>>, 
+    txList: List<LedgerRow>, 
     companyName: String, 
     startDate: String, 
-    endDate: String
+    endDate: String,
+    previousBalance: Double,
+    periodNet: Double,
+    periodClosing: Double
 ) {
     val totalCount = txList.size
     val htmlBuilder = StringBuilder()
@@ -4990,7 +5219,7 @@ fun printAccountStatement(
             <header>
                 <h2>$companyName</h2>
                 <h3>كشف حساب مالي تفصيلي وطباعته</h3>
-                <p>تاريخ استخراج التقرير: 2026-05-29</p>
+                <p>تاريخ استخراج التقرير: 2026-05-31</p>
             </header>
             <table class="meta-table">
                 <tr>
@@ -5002,31 +5231,33 @@ fun printAccountStatement(
                     <td><b>العنوان:</b> ${account.address.ifBlank { "غير متوفر" }}</td>
                 </tr>
                 <tr>
-                    <td><b>الفترة الزمنية المحددة:</b> من ${startDate.ifBlank { "البدأ" }} إلى ${endDate.ifBlank { "اليوم" }}</td>
-                    <td><b>حجم الحركات:</b> $totalCount قيد مالي</td>
+                    <td><b>الفترة الزمنية المحددة:</b> من ${startDate.ifBlank { "البداية" }} إلى ${endDate.ifBlank { "اليوم" }}</td>
+                    <td><b>حجم الحركات في الفترة:</b> $totalCount قيد مالي</td>
                 </tr>
             </table>
             
             <table class="statement-table">
                 <thead>
                     <tr>
-                        <th style="width: 25%;">التاريخ</th>
-                        <th style="width: 50%;">البيان والتفاصيل</th>
-                        <th style="width: 25%;">القيمة المالية</th>
+                        <th style="width: 20%;">التاريخ</th>
+                        <th style="width: 40%;">البيان والتفاصيل</th>
+                        <th style="width: 20%;">الدائن / المدين</th>
+                        <th style="width: 20%;">الرصيد الجاري</th>
                     </tr>
                 </thead>
                 <tbody>
     """.trimIndent())
     
     txList.forEach { tx ->
-        val amt = tx.third
+        val amt = tx.amount
         val amtClass = if (amt >= 0) "credit" else "debit"
         val amtSign = if (amt >= 0) "+" else ""
         htmlBuilder.append("""
             <tr>
-                <td>${tx.first}</td>
-                <td>${tx.second}</td>
-                <td class="$amtClass">$amtSign${String.format("%,.2f", amt)} ${account.currency}</td>
+                <td>${tx.date}</td>
+                <td>${tx.desc}</td>
+                <td class="$amtClass">$amtSign${String.format(java.util.Locale.US, "%,.2f", amt)} ${account.currency}</td>
+                <td>${String.format(java.util.Locale.US, "%,.2f", tx.runningBalance)} ${account.currency}</td>
             </tr>
         """.trimIndent())
     }
@@ -5034,19 +5265,26 @@ fun printAccountStatement(
     htmlBuilder.append("""
                 </tbody>
             </table>
+            <table class="meta-table" style="margin-top: 20px;">
+                <tr>
+                    <td><b>رصيد ما قبل الفترة (الافتتاحي):</b> ${String.format(java.util.Locale.US, "%,.2f", previousBalance)} ${account.currency}</td>
+                    <td><b>صافي حركة الفترة المحددة:</b> ${String.format(java.util.Locale.US, "%,.2f", periodNet)} ${account.currency}</td>
+                </tr>
+            </table>
             <div class="total-box">
-                الرصيد الكلي الإجمالي المجمع: ${String.format("%,.2f", account.balance)} ${account.currency}
+                الرصيد الختامي للقيد المحاسبي في نهاية المدة: ${String.format(java.util.Locale.US, "%,.2f", periodClosing)} ${account.currency}
             </div>
             <p style="text-align: center; margin-top: 30px; font-size: 12px; color: #777;">تم توليد وحفظ هذا التقرير كـ PDF إلكتروني عبر نظام المحاسب الذكي 📱</p>
         </body>
         </html>
     """.trimIndent())
 
-    (context as? android.app.Activity)?.runOnUiThread {
-        val webView = android.webkit.WebView(context)
+    val act = findActivity(context)
+    act?.runOnUiThread {
+        val webView = android.webkit.WebView(act)
         webView.webViewClient = object : android.webkit.WebViewClient() {
             override fun onPageFinished(view: android.webkit.WebView, url: String) {
-                val printManager = context.getSystemService(android.content.Context.PRINT_SERVICE) as android.print.PrintManager
+                val printManager = act.getSystemService(android.content.Context.PRINT_SERVICE) as android.print.PrintManager
                 val jobName = "كشف حساب - ${account.name}"
                 val printAdapter = webView.createPrintDocumentAdapter(jobName)
                 printManager.print(jobName, printAdapter, android.print.PrintAttributes.Builder().build())
@@ -5060,27 +5298,33 @@ fun printAccountStatement(
 fun exportAccountStatementToExcel(
     context: android.content.Context, 
     account: Account, 
-    txList: List<Triple<String, String, Double>>, 
+    txList: List<LedgerRow>, 
     startDate: String, 
-    endDate: String
+    endDate: String,
+    previousBalance: Double,
+    periodNet: Double,
+    periodClosing: Double
 ) {
     val csvContent = StringBuilder()
     // Unicode UTF-8 Byte Order Mark (BOM) to correctly display Arabic in Microsoft Excel!
     csvContent.append('\ufeff')
+    csvContent.append("sep=,\n") // Force Excel separator detection
     csvContent.append("كشف حساب مالي تفصيلي\n")
     csvContent.append("اسم الحساب,${account.name}\n")
     csvContent.append("رقم الهاتف,${account.phone}\n")
     csvContent.append("العنوان,${account.address}\n")
     csvContent.append("نوع الحساب,${account.type}\n")
     csvContent.append("الفترة,من ${startDate.ifBlank { "البداية" }} إلى ${endDate.ifBlank { "اليوم" }}\n")
-    csvContent.append("الرصيد الإجمالي,${account.balance} ${account.currency}\n")
+    csvContent.append("الرصيد الافتتاحي قبل الفترة,${previousBalance} ${account.currency}\n")
+    csvContent.append("صافي حركة الفترة,${periodNet} ${account.currency}\n")
+    csvContent.append("الرصيد الختامي للفترة,${periodClosing} ${account.currency}\n")
     csvContent.append("\n")
-    csvContent.append("التاريخ,البيان,المبلغ,العملة\n")
+    csvContent.append("التاريخ,البيان,المبلغ,الرصيد الجاري,العملة\n")
     
     txList.forEach { tx ->
-        val amt = tx.third
+        val amt = tx.amount
         val amtStr = "${if (amt >= 0) "+" else ""}$amt"
-        csvContent.append("${tx.first},${tx.second},$amtStr,${account.currency}\n")
+        csvContent.append("${tx.date},${tx.desc},$amtStr,${tx.runningBalance},${account.currency}\n")
     }
     
     val fileName = "statement_${account.id}_${System.currentTimeMillis()}.csv"
@@ -5099,8 +5343,426 @@ fun exportAccountStatementToExcel(
             putExtra(android.content.Intent.EXTRA_STREAM, uri)
             putExtra(android.content.Intent.EXTRA_SUBJECT, "تصدير كشف حساب: ${account.name}")
             addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            clipData = android.content.ClipData.newRawUri("", uri)
         }
-        context.startActivity(android.content.Intent.createChooser(intent, "تصدير كشف الحساب إلى Excel"))
+        val chooser = android.content.Intent.createChooser(intent, "تصدير كشف الحساب إلى Excel").apply {
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(chooser)
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "فشل تصدير الملف: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+    }
+}
+
+// System print web adapter helper for General Reports
+fun printReport(
+    context: android.content.Context,
+    type: String,
+    title: String,
+    startDate: String,
+    endDate: String,
+    companyName: String,
+    totalSales: Double,
+    totalProfit: Double,
+    totalReceipts: Double,
+    totalPayments: Double,
+    totalExpenses: Double,
+    topProductsList: List<Pair<Product, Pair<Int, Double>>>,
+    topCustomersList: List<Pair<Account, Double>>,
+    lowStockList: List<Product>,
+    filteredInvoices: List<Invoice>,
+    filteredVouchers: List<Voucher>,
+    accounts: List<Account>
+) {
+    val htmlBuilder = StringBuilder()
+    htmlBuilder.append("""
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body { font-family: 'Courier New', sans-serif; direction: rtl; padding: 20px; }
+                header { text-align: center; margin-bottom: 25px; }
+                h2 { margin: 0; color: #1c544d; font-size: 24px; }
+                p { margin: 4px 0; color: #555; }
+                .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 25px; }
+                .meta-table td { padding: 8px; border: 1px dashed #ccc; font-size: 14px; }
+                .statement-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+                .statement-table th, .statement-table td { padding: 10px; border: 1px solid #777; text-align: right; font-size: 13px; }
+                .statement-table th { background-color: #e4eceb; color: #1c544d; }
+                .credit { color: #2ebd7a; font-weight: bold; }
+                .debit { color: #e03c3c; font-weight: bold; }
+                .total-box { margin-top: 25px; border: 2px solid #1c544d; padding: 15px; font-weight: bold; text-align: center; font-size: 16px; background-color: #f7faf9; }
+                .section-title { font-weight: bold; font-size: 16px; margin-top: 20px; margin-bottom: 10px; color: #1c544d; border-bottom: 2px solid #1c544d; padding-bottom: 5px; }
+            </style>
+        </head>
+        <body>
+            <header>
+                <h2>$companyName</h2>
+                <h3>$title</h3>
+                <p>تاريخ استخراج التقرير: 2026-05-31</p>
+                <p>الفترة الزمنية المحددة: من ${startDate.ifBlank { "البداية" }} إلى ${endDate.ifBlank { "اليوم" }}</p>
+            </header>
+    """.trimIndent())
+
+    when (type) {
+        "daily" -> {
+            htmlBuilder.append("""
+                <div class="section-title">ملخص حركات اليوم/الفترة</div>
+                <table class="meta-table">
+                    <tr>
+                        <td><b>إجمالي المبيعات المحققة:</b> ${String.format(java.util.Locale.US, "%,.2f", totalSales)} ل.س</td>
+                        <td><b>أرباح المبيعات المحققة:</b> ${String.format(java.util.Locale.US, "%,.2f", totalProfit)} ل.س</td>
+                    </tr>
+                    <tr>
+                        <td><b>مجموع المقبوضات النقدية:</b> ${String.format(java.util.Locale.US, "%,.2f", totalReceipts)} ل.س</td>
+                        <td><b>مجموع المدفوعات النقدية:</b> ${String.format(java.util.Locale.US, "%,.2f", totalPayments)} ل.س</td>
+                    </tr>
+                </table>
+                
+                <div class="section-title">الحركات التفصيلية - فواتير المبيعات والعودة</div>
+                <table class="statement-table">
+                    <thead>
+                        <tr>
+                            <th>رقم الفاتورة</th>
+                            <th>التاريخ</th>
+                            <th>الحساب والعميل</th>
+                            <th>نوع الحركة</th>
+                            <th>القيمة</th>
+                            <th>العملة</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            """.trimIndent())
+
+            filteredInvoices.forEach { inv ->
+                val typeStr = when(inv.type) {
+                    "sale" -> "مبيعات"
+                    "purchase" -> "مشتريات"
+                    "return", "return_sale" -> "مرتجع مبيعات"
+                    "return_purchase" -> "مرتجع مشتريات"
+                    else -> inv.type
+                }
+                htmlBuilder.append("""
+                    <tr>
+                        <td>${inv.id}</td>
+                        <td>${inv.date}</td>
+                        <td>${inv.customer}</td>
+                        <td>$typeStr</td>
+                        <td>${String.format(java.util.Locale.US, "%,.2f", inv.total)}</td>
+                        <td>${inv.currency}</td>
+                    </tr>
+                """.trimIndent())
+            }
+
+            htmlBuilder.append("""
+                    </tbody>
+                </table>
+                
+                <div class="section-title">الحركات التفصيلية - السندات المحاسبية</div>
+                <table class="statement-table">
+                    <thead>
+                        <tr>
+                            <th>رقم السند</th>
+                            <th>التاريخ</th>
+                            <th>اسم الحساب والبيان</th>
+                            <th>النوع</th>
+                            <th>القيمة المحولة</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            """.trimIndent())
+
+            filteredVouchers.forEach { v ->
+                val accName = accounts.find { it.id == v.accountId }?.name ?: "حساب محذوف"
+                val typeStr = if (v.type == "receipt") "قبض نقدي" else "صرف نقدي"
+                val amtClass = if (v.type == "receipt") "credit" else "debit"
+                val amtSign = if (v.type == "receipt") "+" else "-"
+                htmlBuilder.append("""
+                    <tr>
+                        <td>${v.id}</td>
+                        <td>${v.date}</td>
+                        <td>$accName - ${v.desc}</td>
+                        <td>$typeStr</td>
+                        <td class="$amtClass">$amtSign${String.format(java.util.Locale.US, "%,.2f", v.amount)}</td>
+                    </tr>
+                """.trimIndent())
+            }
+
+            htmlBuilder.append("""
+                    </tbody>
+                </table>
+            """.trimIndent())
+        }
+        "pl" -> {
+            val cogs = totalSales - totalProfit
+            val grossProfit = totalProfit
+            val dynamicExpenses = totalExpenses
+            val netProfit = grossProfit - dynamicExpenses
+
+            htmlBuilder.append("""
+                <div class="section-title">بيان الأرباح والخسائر الشامل</div>
+                <table class="statement-table" style="width: 100%;">
+                    <thead>
+                        <tr>
+                            <th style="width: 60%;">الحساب المالي / البيان</th>
+                            <th style="width: 40%; text-align: left;">القيمة بالعملة المحلية (ل.س)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><b>إجمالي المبيعات المحققة بالفترة</b></td>
+                            <td class="credit" style="text-align: left;">+ ${String.format(java.util.Locale.US, "%,.2f", totalSales)}</td>
+                        </tr>
+                        <tr>
+                            <td><b>تكلفة البضاعة المباعة (الرقم الفعلي)</b></td>
+                            <td class="debit" style="text-align: left;">- ${String.format(java.util.Locale.US, "%,.2f", cogs)}</td>
+                        </tr>
+                        <tr style="background-color: #f0f5f4;">
+                            <td><b>مجمل الربح الإجمالي (إجمالي المساهمة)</b></td>
+                            <td class="credit" style="font-weight: bold; text-align: left;">+ ${String.format(java.util.Locale.US, "%,.2f", grossProfit)}</td>
+                        </tr>
+                        <tr>
+                            <td><b>المصاريف التشغيلية الفعلية (سندات الصرف)</b></td>
+                            <td class="debit" style="text-align: left;">- ${String.format(java.util.Locale.US, "%,.2f", dynamicExpenses)}</td>
+                        </tr>
+                        <tr style="background-color: #e4eceb; border-top: 2px solid #1c544d;">
+                            <td><b style="font-size: 15px;">صافي الدخل النهائي والربح الصافي</b></td>
+                            <td class="credit" style="font-size: 15px; font-weight: bold; text-align: left;">${String.format(java.util.Locale.US, "%,.2f", netProfit)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            """.trimIndent())
+        }
+        "topProducts" -> {
+            htmlBuilder.append("""
+                <div class="section-title">المواد الأكثر حركة ومبيعاً</div>
+                <table class="statement-table">
+                    <thead>
+                        <tr>
+                            <th>الترتيب</th>
+                            <th>المادة</th>
+                            <th>الكمية المباعة</th>
+                            <th>الإيرادات الإجمالية ل.س</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            """.trimIndent())
+
+            topProductsList.filter { it.second.first > 0 || (startDate.isEmpty() && endDate.isEmpty()) }.forEachIndexed { idx, item ->
+                htmlBuilder.append("""
+                    <tr>
+                        <td style="text-align: center;">${idx + 1}</td>
+                        <td>${item.first.icon} ${item.first.name}</td>
+                        <td>${item.second.first} ${item.first.unit}</td>
+                        <td class="credit">${String.format(java.util.Locale.US, "%,.2f", item.second.second)} ل.س</td>
+                    </tr>
+                """.trimIndent())
+            }
+
+            htmlBuilder.append("""
+                    </tbody>
+                </table>
+            """.trimIndent())
+        }
+        "topCustomers" -> {
+            htmlBuilder.append("""
+                <div class="section-title">ترتيب عملاء الشركة الأكثر حركة</div>
+                <table class="statement-table">
+                    <thead>
+                        <tr>
+                            <th>الترتيب</th>
+                            <th>اسم الحساب والعميل</th>
+                            <th>حجم التعامل المالي بالفترة</th>
+                            <th>الرصيد الكلي الحالي بالحساب</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            """.trimIndent())
+
+            topCustomersList.filter { it.second > 0.0 || (startDate.isEmpty() && endDate.isEmpty()) }.forEachIndexed { idx, item ->
+                val balanceColor = if (item.first.balance >= 0) "credit" else "debit"
+                htmlBuilder.append("""
+                    <tr>
+                        <td style="text-align: center;">${idx + 1}</td>
+                        <td>${item.first.name}</td>
+                        <td>${String.format(java.util.Locale.US, "%,.2f", item.second)} ${item.first.currency}</td>
+                        <td class="$balanceColor">${String.format(java.util.Locale.US, "%,.2f", Math.abs(item.first.balance))} ${item.first.currency}</td>
+                    </tr>
+                """.trimIndent())
+            }
+
+            htmlBuilder.append("""
+                    </tbody>
+                </table>
+            """.trimIndent())
+        }
+        "lowStock" -> {
+            htmlBuilder.append("""
+                <div class="section-title">جرد النواقص والمواد تحت خط الأمان</div>
+                <table class="statement-table">
+                    <thead>
+                        <tr>
+                            <th>المادة</th>
+                            <th>الكمية المتوفرة حالياً</th>
+                            <th>الحد الأدنى لطلب الأمان</th>
+                            <th>الوحدة القياسية</th>
+                            <th>حالة الإنذار</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            """.trimIndent())
+
+            lowStockList.forEach { p ->
+                htmlBuilder.append("""
+                    <tr>
+                        <td>${p.icon} ${p.name}</td>
+                        <td class="debit">${p.qty}</td>
+                        <td>${p.minQty}</td>
+                        <td>${p.unit}</td>
+                        <td style="color: #e03c3c; font-weight: bold;">تحت الأمان ⚠️</td>
+                    </tr>
+                """.trimIndent())
+            }
+
+            htmlBuilder.append("""
+                    </tbody>
+                </table>
+            """.trimIndent())
+        }
+    }
+
+    htmlBuilder.append("""
+            <p style="text-align: center; margin-top: 40px; font-size: 12px; color: #777;">تم توليد هذا التقرير المحاسبي إلكترونياً عبر تطبيق فواتير والمحاسب الذكي 📈</p>
+        </body>
+        </html>
+    """.trimIndent())
+
+    val act = findActivity(context)
+    act?.runOnUiThread {
+        val webView = android.webkit.WebView(act)
+        webView.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onPageFinished(view: android.webkit.WebView, url: String) {
+                val printManager = act.getSystemService(android.content.Context.PRINT_SERVICE) as android.print.PrintManager
+                val jobName = "تقرير $title - المحاسب الذكي"
+                val printAdapter = webView.createPrintDocumentAdapter(jobName)
+                printManager.print(jobName, printAdapter, android.print.PrintAttributes.Builder().build())
+            }
+        }
+        webView.loadDataWithBaseURL(null, htmlBuilder.toString(), "text/html", "utf-8", null)
+    }
+}
+
+// System export CSV web adapter helper for General Reports
+fun exportReportToExcel(
+    context: android.content.Context,
+    type: String,
+    title: String,
+    startDate: String,
+    endDate: String,
+    companyName: String,
+    totalSales: Double,
+    totalProfit: Double,
+    totalReceipts: Double,
+    totalPayments: Double,
+    totalExpenses: Double,
+    topProductsList: List<Pair<Product, Pair<Int, Double>>>,
+    topCustomersList: List<Pair<Account, Double>>,
+    lowStockList: List<Product>,
+    filteredInvoices: List<Invoice>,
+    filteredVouchers: List<Voucher>,
+    accounts: List<Account>
+) {
+    val csvContent = StringBuilder()
+    csvContent.append('\ufeff')
+    csvContent.append("sep=,\n") // Force Excel separator detection
+    csvContent.append("تقرير الذكي - $companyName\n")
+    csvContent.append("نوع التقرير,$title\n")
+    csvContent.append("الفترة,من ${startDate.ifBlank { "البداية" }} إلى ${endDate.ifBlank { "اليوم" }}\n")
+    csvContent.append("تاريخ التصدير,2026-05-31\n\n")
+
+    when (type) {
+        "daily" -> {
+            csvContent.append("ملخص حركات الفترة\n")
+            csvContent.append("إجمالي المبيعات المحققة ل.س,$totalSales\n")
+            csvContent.append("أرباح المبيعات ل.س,$totalProfit\n")
+            csvContent.append("المقبوضات الإجمالية ل.س,$totalReceipts\n")
+            csvContent.append("المدفوعات الإجمالية ل.س,$totalPayments\n\n")
+
+            csvContent.append("فواتير المبيعات والمرتجع\n")
+            csvContent.append("رقم الفاتورة,التاريخ,الحساب والعميل,النوع,القيمة,العملة,الحالة\n")
+            filteredInvoices.forEach { inv ->
+                val typeStr = when(inv.type) {
+                    "sale" -> "مبيعات"
+                    "purchase" -> "مشتريات"
+                    "return", "return_sale" -> "مرتجع مبيعات"
+                    "return_purchase" -> "مرتجع مشتريات"
+                    else -> inv.type
+                }
+                csvContent.append("${inv.id},${inv.date},${inv.customer},$typeStr,${inv.total},${inv.currency},${if (inv.status == "saved") "محفوظة" else "مسودة"}\n")
+            }
+            csvContent.append("\nسندات القبض والصرف\n")
+            csvContent.append("رقم السند,التاريخ,الحساب,النوع,القيمة,البيان\n")
+            filteredVouchers.forEach { v ->
+                val acc = accounts.find { it.id == v.accountId }?.name ?: "غير معروف"
+                val typeStr = if (v.type == "receipt") "قبض" else "صرف"
+                csvContent.append("${v.id},${v.date},$acc,$typeStr,${v.amount},${v.desc}\n")
+            }
+        }
+        "pl" -> {
+            val cogs = totalSales - totalProfit
+            val grossProfit = totalProfit
+            val dynamicExpenses = totalExpenses
+            val netProfit = grossProfit - dynamicExpenses
+
+            csvContent.append("البند المحاسبي,القيمة ل.س\n")
+            csvContent.append("إجمالي المبيعات المحققة,$totalSales\n")
+            csvContent.append("تكلفة البضاعة المباعة,-$cogs\n")
+            csvContent.append("مجمل الربح الإجمالي,$grossProfit\n")
+            csvContent.append("المصاريف التشغيلية الفعلية,-$dynamicExpenses\n")
+            csvContent.append("صافي الدخل النهائي للفترة,$netProfit\n")
+        }
+        "topProducts" -> {
+            csvContent.append("الترتيب,المادة,الكمية المباعة,الإيرادات المحققة ل.س\n")
+            topProductsList.filter { it.second.first > 0 || (startDate.isEmpty() && endDate.isEmpty()) }.forEachIndexed { idx, item ->
+                csvContent.append("${idx + 1},${item.first.name},${item.second.first},${item.second.second}\n")
+            }
+        }
+        "topCustomers" -> {
+            csvContent.append("الترتيب,العميل,حجم التعامل بالفترة,الرصيد الحالي,العملة\n")
+            topCustomersList.filter { it.second > 0.0 || (startDate.isEmpty() && endDate.isEmpty()) }.forEachIndexed { idx, item ->
+                csvContent.append("${idx + 1},${item.first.name},${item.second},${item.first.balance},${item.first.currency}\n")
+            }
+        }
+        "lowStock" -> {
+            csvContent.append("المادة,الكمية المتوفرة,الحد الأدنى للأمان,الوحدة\n")
+            lowStockList.forEach { p ->
+                csvContent.append("${p.name},${p.qty},${p.minQty},${p.unit}\n")
+            }
+        }
+    }
+
+    val fileName = "report_${type}_${System.currentTimeMillis()}.csv"
+    try {
+        val file = java.io.File(context.cacheDir, fileName)
+        file.writeText(csvContent.toString(), Charsets.UTF_8)
+        
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "com.example.fileprovider",
+            file
+        )
+        
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            this.type = "text/csv"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            putExtra(android.content.Intent.EXTRA_SUBJECT, "تصدير تقرير: $title")
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            clipData = android.content.ClipData.newRawUri("", uri)
+        }
+        val chooser = android.content.Intent.createChooser(intent, "تصدير التقرير إلى Excel").apply {
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(chooser)
     } catch (e: Exception) {
         android.widget.Toast.makeText(context, "فشل تصدير الملف: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
     }
