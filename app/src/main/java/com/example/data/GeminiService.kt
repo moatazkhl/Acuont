@@ -5,7 +5,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
-import retrofit2.converter.kotlinx.serialization.asConverterFactory
+import retrofit2.converter.scalars.ScalarsConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.POST
 import retrofit2.http.Query
@@ -47,11 +47,11 @@ data class Candidate(
 )
 
 interface GeminiApiService {
-    @POST("v1beta/models/gemini-3.5-flash:generateContent")
+    @POST("v1beta/models/gemini-1.5-flash:generateContent")
     suspend fun generateContent(
         @Query("key") apiKey: String,
-        @Body request: GenerateContentRequest
-    ): GenerateContentResponse
+        @Body request: String
+    ): String
 }
 
 object RetrofitClient {
@@ -64,11 +64,10 @@ object RetrofitClient {
         .build()
 
     val service: GeminiApiService by lazy {
-        val json = Json { ignoreUnknownKeys = true }
         val retrofit = Retrofit.Builder()
             .baseUrl(BASE_URL)
             .client(okHttpClient)
-            .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+            .addConverterFactory(ScalarsConverterFactory.create())
             .build()
         retrofit.create(GeminiApiService::class.java)
     }
@@ -94,7 +93,10 @@ object GeminiService {
         )
 
         return try {
-            val response = RetrofitClient.service.generateContent(apiKey, request)
+            val json = Json { ignoreUnknownKeys = true }
+            val requestString = json.encodeToString(GenerateContentRequest.serializer(), request)
+            val responseString = RetrofitClient.service.generateContent(apiKey, requestString)
+            val response = json.decodeFromString(GenerateContentResponse.serializer(), responseString)
             response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text 
                 ?: "عذراً، استجابة الذكاء الاصطناعي فارغة حالياً."
         } catch (e: Exception) {

@@ -11,8 +11,7 @@ class Repository(private val database: AppDatabase) {
 
     // Flow getters for reactive updates
     val allUsersFlow: Flow<List<UserEntity>> = userDao.getAllUsersFlow()
-    val allProductsFlow: Flow<List<ProductEntity>> = productDao.allProductsFlow // Wait, check Daos.kt: fun getAllProductsFlow()
-    val allProductsFlowFromDao: Flow<List<ProductEntity>> = productDao.getAllProductsFlow()
+    val allProductsFlow: Flow<List<ProductEntity>> = productDao.getAllProductsFlow()
     val allInvoicesFlow: Flow<List<InvoiceEntity>> = invoiceDao.getAllInvoicesFlow()
     val allVouchersFlow: Flow<List<VoucherEntity>> = voucherDao.getAllVouchersFlow()
 

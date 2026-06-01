@@ -40,6 +40,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.*
 import com.example.ui.AppViewModel
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
 import java.util.*
@@ -96,6 +97,7 @@ fun SmartAccountantTheme(content: @Composable () -> Unit) {
 fun AccountantAppContent() {
     val context = LocalContext.current
     val viewModel: AppViewModel = viewModel()
+    val coroutineScope = rememberCoroutineScope()
 
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
     val loggedInPhone by viewModel.loggedInPhone.collectAsState()
@@ -135,7 +137,7 @@ fun AccountantAppContent() {
         contract = ActivityResultContracts.CreateDocument("text/csv")
     ) { uri ->
         uri?.let {
-            viewModel.viewModelScope.launch {
+            coroutineScope.launch {
                 val success = viewModel.exportReportToCsv(context, it)
                 if (success) {
                     Toast.makeText(context, "تم تصدير كشف الحساب والتحليل المالي بنجاح بصيغة CSV!", Toast.LENGTH_LONG).show()
@@ -150,7 +152,7 @@ fun AccountantAppContent() {
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         uri?.let {
-            viewModel.viewModelScope.launch {
+            coroutineScope.launch {
                 val success = viewModel.exportBackup(context, it)
                 if (success) {
                     Toast.makeText(context, "تم حفظ النسخة الاحتياطية بنجاح!", Toast.LENGTH_LONG).show()
@@ -165,7 +167,7 @@ fun AccountantAppContent() {
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let {
-            viewModel.viewModelScope.launch {
+            coroutineScope.launch {
                 val success = viewModel.importBackup(context, it)
                 if (success) {
                     Toast.makeText(context, "تم استعادة كامل البيانات والمستندات بنجاح من النسخة المحددة!", Toast.LENGTH_LONG).show()
@@ -1050,7 +1052,7 @@ fun AccountingVouchersScreen(
                 if (invoices.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Icon(Icons.Default.ReceiptLong, contentDescription = null, size = 48.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                            Icon(Icons.Default.ReceiptLong, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
                             Text("لا توجد فواتير بهذا النطاق الزمني.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                         }
                     }
@@ -1066,7 +1068,7 @@ fun AccountingVouchersScreen(
                 if (vouchers.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Icon(Icons.Default.AttachMoney, contentDescription = null, size = 48.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                            Icon(Icons.Default.AttachMoney, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
                             Text("لا توجد سندات قبض أو صرف بهذا النطاق الزمني.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                         }
                     }
@@ -1168,8 +1170,16 @@ fun InvoiceLogCard(invoice: InvoiceEntity, df: SimpleDateFormat, onDelete: (Invo
             if (expanded) {
                 Divider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.surfaceVariant)
                 Text("تفاصيل بنود الفاتورة:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                try {
-                    val items = Json.decodeFromString<List<InvoiceItem>>(invoice.detailsJson)
+                val items = remember(invoice.detailsJson) {
+                    try {
+                        Json.decodeFromString<List<InvoiceItem>>(invoice.detailsJson)
+                    } catch (e: Exception) {
+                        emptyList<InvoiceItem>()
+                    }
+                }
+                if (items.isEmpty()) {
+                    Text("لا يوجد بنود مفصلة", fontSize = 11.sp, color = Color.Gray)
+                } else {
                     items.forEach { item ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1179,8 +1189,6 @@ fun InvoiceLogCard(invoice: InvoiceEntity, df: SimpleDateFormat, onDelete: (Invo
                             Text("${item.quantity} عدد  ×  ${item.unitPrice} ل.س", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                } catch (e: Exception) {
-                    Text("لا يوجد بنود مفصلة", fontSize = 11.sp, color = Color.Gray)
                 }
             }
         }

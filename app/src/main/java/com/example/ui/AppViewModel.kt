@@ -54,7 +54,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val registeredUsers: StateFlow<List<UserEntity>> = repository.allUsersFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val allProducts: StateFlow<List<ProductEntity>> = repository.allProductsFlowFromDao
+    val allProducts: StateFlow<List<ProductEntity>> = repository.allProductsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val allInvoices: StateFlow<List<InvoiceEntity>> = repository.allInvoicesFlow

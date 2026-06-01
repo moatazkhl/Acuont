@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.SmartAccountant" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Primary brand color. -->
-        <item name="colorPrimary">@android:color/holo_blue_dark</item>
+    <style name="Theme.SmartAccountant" parent="android:Theme.DeviceDefault.NoActionBar">
+        <!-- System properties -->
         <item name="android:statusBarColor">?android:attr/colorBackground</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>

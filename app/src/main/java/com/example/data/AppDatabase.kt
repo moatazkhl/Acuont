@@ -13,8 +13,6 @@ import androidx.room.RoomDatabase
 abstract class AppDatabase : RoomDatabase() {
     abstract fun userDao(): UserDao
     abstract fun productDao(): ProductDao
-    abstract fun invoiceDao(): Dao_InvoiceDao // Wait, we named the DAO interface "InvoiceDao" in Daos.kt
-    // Let's verify Daos.kt names: UserDao, ProductDao, InvoiceDao, VoucherDao
     abstract fun invoiceDao(): InvoiceDao
     abstract fun voucherDao(): VoucherDao
 
