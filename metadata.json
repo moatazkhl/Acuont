@@ -1,0 +1,8 @@
+{
+  "name": "المحاسب الذكي الأنيق",
+  "description": "تطبيق محاسبة ذكي لإدارة الفواتير والمنتجات وحسابات العملاء مع نظام اشتراكات تجريبي ومدفوع متكامل مع واتساب والنسخ الاحتياطي السحابي",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
