@@ -5,36 +5,30 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Invoice::class, Account::class, Product::class, Voucher::class, ProductCategory::class, ExchangeRate::class], version = 7, exportSchema = false)
+@Database(
+    entities = [Product::class, Invoice::class, InvoiceItem::class, Voucher::class],
+    version = 1,
+    exportSchema = false
+)
 abstract class AppDatabase : RoomDatabase() {
-    abstract fun appDao(): AppDao
+    abstract fun productDao(): ProductDao
+    abstract fun invoiceDao(): InvoiceDao
+    abstract fun invoiceItemDao(): InvoiceItemDao
+    abstract fun voucherDao(): VoucherDao
 
     companion object {
-        private val INSTANCES = java.util.concurrent.ConcurrentHashMap<String, AppDatabase>()
+        @Volatile
+        private var INSTANCE: AppDatabase? = null
 
-        fun getDatabase(context: Context, dbName: String = "smart_accountant_db"): AppDatabase {
-            val actualDbName = if (dbName.endsWith(".db")) dbName else "$dbName.db"
-            return INSTANCES.getOrPut(actualDbName) {
-                Room.databaseBuilder(
+        fun getDatabase(context: Context): AppDatabase {
+            return INSTANCE ?: synchronized(this) {
+                val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    actualDbName
-                )
-                .fallbackToDestructiveMigration()
-                .build()
-            }
-        }
-
-        fun closeAndRemoveDatabase(dbName: String) {
-            val actualDbName = if (dbName.endsWith(".db")) dbName else "$dbName.db"
-            INSTANCES.remove(actualDbName)?.let { db ->
-                try {
-                    if (db.isOpen) {
-                        db.close()
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                    "smart_accountant_db"
+                ).fallbackToDestructiveMigration().build()
+                INSTANCE = instance
+                instance
             }
         }
     }

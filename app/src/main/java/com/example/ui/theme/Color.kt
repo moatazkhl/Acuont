@@ -2,26 +2,20 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Light Colors
-val PrimaryTeal = Color(0xFF1A6B5E)
-val PrimaryLight = Color(0xFF25977F)
-val PrimaryDark = Color(0xFF124E45)
-val AccentGold = Color(0xFFF5A623)
-val BackgroundMint = Color(0xFFF0F4F3)
-val SurfaceWhite = Color(0xFFFFFFFF)
-val TextDark = Color(0xFF1A2E2B)
-val TextSecondaryDark = Color(0xFF4A6B65)
+// Navy & Slate Premium Colors for accounting
+val PrimarySlate = Color(0xFF0F172A) // 900
+val SecondaryNavy = Color(0xFF1E293B) // 800
+val AccentTeal = Color(0xFF0F766E) // 700
+val AccentLightTeal = Color(0xFF14B8A6) // 500
 
-// Dark Colors
-val PrimaryTealDark = Color(0xFF25977F)
-val PrimaryLightDark = Color(0xFF30B898)
-val BackgroundMintDark = Color(0xFF0E1E1C)
-val SurfaceDark = Color(0xFF1C302D)
-val TextLight = Color(0xFFE2EFED)
-val TextSecondaryLight = Color(0xFF9BBFBA)
+val BackgroundDark = Color(0xFF0B0F19)
+val SurfaceCard = Color(0xFF131B2E)
+val BorderColor = Color(0xFF1E293B)
 
-// Status Colors
-val SuccessGreen = Color(0xFF2EBD7A)
-val DangerRed = Color(0xFFE03C3C)
-val WarningOrange = Color(0xFFF5A623)
-val InfoBlue = Color(0xFF4A7FA5)
+val OnBackgroundLight = Color(0xFFF8FAFC)
+val OnSurfaceLight = Color(0xFFE2E8F0)
+
+val GreenProfit = Color(0xFF10B981)
+val RedDanger = Color(0xFFEF4444)
+val YellowWarning = Color(0xFFF59E0B)
+val LightBlue = Color(0xFF3B82F6)

@@ -1,42 +1,61 @@
 package com.example.ui.theme
 
+import android.app.Activity
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 
 private val DarkColorScheme = darkColorScheme(
-    primary = PrimaryTealDark,
-    secondary = PrimaryLightDark,
-    tertiary = AccentGold,
-    background = BackgroundMintDark,
-    surface = SurfaceDark,
-    onPrimary = TextLight,
-    onSecondary = TextLight,
-    onBackground = TextLight,
-    onSurface = TextLight,
-    error = DangerRed
+    primary = AccentLightTeal,
+    secondary = SecondaryNavy,
+    tertiary = LightBlue,
+    background = BackgroundDark,
+    surface = SurfaceCard,
+    onPrimary = Color.Black,
+    onSecondary = Color.White,
+    onTertiary = Color.White,
+    onBackground = OnBackgroundLight,
+    onSurface = OnSurfaceLight,
+    surfaceVariant = SecondaryNavy,
+    onSurfaceVariant = OnSurfaceLight
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = PrimaryTeal,
-    secondary = PrimaryLight,
-    tertiary = AccentGold,
-    background = BackgroundMint,
-    surface = SurfaceWhite,
-    onPrimary = SurfaceWhite,
-    onSecondary = SurfaceWhite,
-    onBackground = TextDark,
-    onSurface = TextDark,
-    error = DangerRed
+    primary = AccentTeal,
+    secondary = SecondaryNavy,
+    tertiary = LightBlue,
+    background = OnBackgroundLight,
+    surface = Color.White,
+    onPrimary = Color.White,
+    onSecondary = Color.White,
+    onTertiary = Color.White,
+    onBackground = PrimarySlate,
+    onSurface = PrimarySlate,
+    surfaceVariant = Color(0xFFF1F5F9),
+    onSurfaceVariant = PrimarySlate
 )
 
 @Composable
 fun SmartAccountantTheme(
-    darkTheme: Boolean = false,
+    darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as Activity).window
+            window.statusBarColor = colorScheme.primary.toArgb()
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+        }
+    }
 
     MaterialTheme(
         colorScheme = colorScheme,
