@@ -1,6 +1,0 @@
-{
-  "name": "المحاسب الذكي",
-  "description": "نظام المحاسبة والمستودعات المتكامل وسندات القبض والصرف وجداول المواد وتقارير الربحية",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
