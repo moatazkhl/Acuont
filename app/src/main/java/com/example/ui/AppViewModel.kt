@@ -23,7 +23,8 @@ data class DatabaseBackup(
     val invoices: List<InvoiceEntity>,
     val vouchers: List<VoucherEntity>,
     val attendance: List<AttendanceEntity>,
-    val manufacturing: List<ManufacturingEntity>
+    val manufacturing: List<ManufacturingEntity>,
+    val warehouses: List<WarehouseEntity> = emptyList()
 )
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
@@ -70,6 +71,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _manufacturing = MutableStateFlow<List<ManufacturingEntity>>(emptyList())
     val manufacturing: StateFlow<List<ManufacturingEntity>> = _manufacturing.asStateFlow()
 
+    private val _warehouses = MutableStateFlow<List<WarehouseEntity>>(emptyList())
+    val warehouses: StateFlow<List<WarehouseEntity>> = _warehouses.asStateFlow()
+
     // Loading states
     val isEvaluatingReport = MutableStateFlow(false)
     val aiResponse = MutableStateFlow("")
@@ -86,6 +90,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     launch { repository.getVouchersForCompanyFlow(company.id).collect { _vouchers.value = it } }
                     launch { repository.getAttendanceForCompanyFlow(company.id).collect { _attendance.value = it } }
                     launch { repository.getManufacturingForCompanyFlow(company.id).collect { _manufacturing.value = it } }
+                    launch { repository.getWarehousesForCompanyFlow(company.id).collect { 
+                        _warehouses.value = it 
+                        // Seed default warehouse if completely empty for this company
+                        if (it.isEmpty()) {
+                            repository.insertWarehouse(WarehouseEntity(companyId = company.id, name = "المستودع الرئيسي", location = "المركز الرئيسي"))
+                        }
+                    } }
                 } else {
                     _currencies.value = emptyList()
                     _accounts.value = emptyList()
@@ -94,6 +105,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     _vouchers.value = emptyList()
                     _attendance.value = emptyList()
                     _manufacturing.value = emptyList()
+                    _warehouses.value = emptyList()
                 }
             }
         }
@@ -240,13 +252,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Product CRUD
-    fun addProduct(name: String, category: String, unit: String, costPrice: Double, sellingPrice: Double, barcode: String, stockQuantity: Double, lowStock: Double) {
+    fun addProduct(name: String, category: String, unit: String, costPrice: Double, sellingPrice: Double, barcode: String, stockQuantity: Double, lowStock: Double, priceCurrency: String = "SYP", warehouseName: String = "المستودع الرئيسي") {
         val cid = activeCompany.value?.id ?: return
         viewModelScope.launch {
             repository.insertProduct(ProductEntity(
                 companyId = cid, name = name, category = category, unit = unit,
                 costPrice = costPrice, sellingPrice = sellingPrice, barcode = barcode,
-                stockQuantity = stockQuantity, lowStockThreshold = lowStock
+                stockQuantity = stockQuantity, lowStockThreshold = lowStock,
+                priceCurrency = priceCurrency, warehouseName = warehouseName
             ))
         }
     }
@@ -260,6 +273,50 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteProduct(product: ProductEntity) {
         viewModelScope.launch {
             repository.deleteProduct(product)
+        }
+    }
+
+    // Warehouse CRUD
+    fun addWarehouse(name: String, location: String = "") {
+        val cid = activeCompany.value?.id ?: return
+        viewModelScope.launch {
+            repository.insertWarehouse(WarehouseEntity(companyId = cid, name = name, location = location))
+        }
+    }
+
+    fun updateWarehouse(warehouse: WarehouseEntity) {
+        viewModelScope.launch {
+            repository.updateWarehouse(warehouse)
+        }
+    }
+
+    fun deleteWarehouse(warehouse: WarehouseEntity) {
+        viewModelScope.launch {
+            repository.deleteWarehouse(warehouse)
+        }
+    }
+
+    private suspend fun adjustStockForInvoice(invoice: InvoiceEntity, isReversal: Boolean) {
+        try {
+            val itemsList = Json.decodeFromString<List<InvoiceItem>>(invoice.detailsJson)
+            val type = invoice.type
+            itemsList.forEach { i ->
+                val p = repository.productDao.getProductsForCompany(invoice.companyId).find { it.name == i.name }
+                if (p != null) {
+                    var scale = when (type) {
+                        "مبيع", "إتلاف", "مردود مشتريات" -> -i.quantity
+                        "شراء", "مردود مبيعات" -> i.quantity
+                        else -> 0.0
+                    }
+                    if (isReversal) {
+                        scale = -scale
+                    }
+                    val updatedStock = p.stockQuantity + scale
+                    repository.updateProduct(p.copy(stockQuantity = if (updatedStock < 0) 0.0 else updatedStock))
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -282,35 +339,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 detailsJson = serializedItems
             )
             repository.insertInvoice(invoice)
-
-            // Adjust inventory stock based on type
-            itemsList.forEach { i ->
-                val p = products.value.find { it.name == i.name }
-                if (p != null) {
-                    val scale = when (type) {
-                        "مبيع", "إتلاف" -> -i.quantity
-                        "شراء" -> i.quantity
-                        "مردود مبيعات" -> i.quantity
-                        "مردود مشتريات" -> -i.quantity
-                        else -> 0.0
-                    }
-                    val updatedStock = p.stockQuantity + scale
-                    repository.updateProduct(p.copy(stockQuantity = if (updatedStock < 0) 0.0 else updatedStock))
-                }
-            }
+            adjustStockForInvoice(invoice, isReversal = false)
         }
     }
 
     fun updateInvoice(invoice: InvoiceEntity) {
         viewModelScope.launch {
+            val oldInvoice = invoices.value.find { it.id == invoice.id }
+            if (oldInvoice != null) {
+                adjustStockForInvoice(oldInvoice, isReversal = true)
+            }
             repository.updateInvoice(invoice)
+            adjustStockForInvoice(invoice, isReversal = false)
         }
     }
 
     fun deleteInvoice(invoice: InvoiceEntity) {
         viewModelScope.launch {
+            adjustStockForInvoice(invoice, isReversal = true)
             repository.deleteInvoice(invoice)
-            // Note: In real life inventory would be reversed, but here we keep simulation robust and keep deletion straightforward.
         }
     }
 
@@ -553,7 +600,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 invoices = invoices.value,
                 vouchers = vouchers.value,
                 attendance = attendance.value,
-                manufacturing = manufacturing.value
+                manufacturing = manufacturing.value,
+                warehouses = warehouses.value
             )
             val jsonString = Json.encodeToString(backup)
             context.contentResolver.openOutputStream(targetUri)?.use { output ->
@@ -584,6 +632,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             backup.vouchers.forEach { repository.insertVoucher(it) }
             backup.attendance.forEach { repository.insertAttendance(it) }
             backup.manufacturing.forEach { repository.insertManufacturing(it) }
+            backup.warehouses.forEach { repository.insertWarehouse(it) }
 
             // Trigger reset state
             if (backup.companies.isNotEmpty()) {

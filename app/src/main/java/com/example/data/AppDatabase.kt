@@ -14,9 +14,10 @@ import androidx.room.RoomDatabase
         InvoiceEntity::class,
         VoucherEntity::class,
         AttendanceEntity::class,
-        ManufacturingEntity::class
+        ManufacturingEntity::class,
+        WarehouseEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -29,6 +30,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun voucherDao(): VoucherDao
     abstract fun attendanceDao(): AttendanceDao
     abstract fun manufacturingDao(): ManufacturingDao
+    abstract fun warehouseDao(): WarehouseDao
 
     companion object {
         @Volatile

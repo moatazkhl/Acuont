@@ -13,6 +13,7 @@ class Repository(private val db: AppDatabase) {
     val voucherDao = db.voucherDao()
     val attendanceDao = db.attendanceDao()
     val manufacturingDao = db.manufacturingDao()
+    val warehouseDao = db.warehouseDao()
 
     // Companies
     val allCompaniesFlow: Flow<List<CompanyEntity>> = companyDao.getAllCompaniesFlow()
@@ -69,4 +70,11 @@ class Repository(private val db: AppDatabase) {
     suspend fun insertManufacturing(manufacturing: ManufacturingEntity) = manufacturingDao.insertManufacturing(manufacturing)
     suspend fun updateManufacturing(manufacturing: ManufacturingEntity) = manufacturingDao.updateManufacturing(manufacturing)
     suspend fun deleteManufacturing(manufacturing: ManufacturingEntity) = manufacturingDao.deleteManufacturing(manufacturing)
+
+    // Warehouses
+    fun getWarehousesForCompanyFlow(companyId: Int) = warehouseDao.getWarehousesForCompanyFlow(companyId)
+    suspend fun getWarehousesForCompany(companyId: Int) = warehouseDao.getWarehousesForCompany(companyId)
+    suspend fun insertWarehouse(warehouse: WarehouseEntity) = warehouseDao.insertWarehouse(warehouse)
+    suspend fun updateWarehouse(warehouse: WarehouseEntity) = warehouseDao.updateWarehouse(warehouse)
+    suspend fun deleteWarehouse(warehouse: WarehouseEntity) = warehouseDao.deleteWarehouse(warehouse)
 }

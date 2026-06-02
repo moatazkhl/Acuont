@@ -151,3 +151,21 @@ interface ManufacturingDao {
     @Delete
     suspend fun deleteManufacturing(manufacturing: ManufacturingEntity)
 }
+
+@Dao
+interface WarehouseDao {
+    @Query("SELECT * FROM warehouses WHERE companyId = :companyId ORDER BY name ASC")
+    fun getWarehousesForCompanyFlow(companyId: Int): Flow<List<WarehouseEntity>>
+
+    @Query("SELECT * FROM warehouses WHERE companyId = :companyId")
+    suspend fun getWarehousesForCompany(companyId: Int): List<WarehouseEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertWarehouse(warehouse: WarehouseEntity)
+
+    @Update
+    suspend fun updateWarehouse(warehouse: WarehouseEntity)
+
+    @Delete
+    suspend fun deleteWarehouse(warehouse: WarehouseEntity)
+}

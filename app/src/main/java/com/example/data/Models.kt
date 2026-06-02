@@ -34,6 +34,15 @@ data class AccountEntity(
     val notes: String = ""
 )
 
+@Entity(tableName = "warehouses")
+@Serializable
+data class WarehouseEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val companyId: Int,
+    val name: String,
+    val location: String = ""
+)
+
 @Entity(tableName = "products")
 @Serializable
 data class ProductEntity(
@@ -42,11 +51,13 @@ data class ProductEntity(
     val name: String,
     val category: String = "عام",
     val unit: String = "قطعة",
-    val costPrice: Double = 0.0,    // Stored in local currency
-    val sellingPrice: Double = 0.0, // Stored in local currency
+    val costPrice: Double = 0.0,    // Price in priceCurrency
+    val sellingPrice: Double = 0.0, // Price in priceCurrency
     val barcode: String = "",
     val stockQuantity: Double = 0.0,
-    val lowStockThreshold: Double = 5.0
+    val lowStockThreshold: Double = 5.0,
+    val priceCurrency: String = "SYP",
+    val warehouseName: String = "المستودع الرئيسي"
 )
 
 @Entity(tableName = "invoices")
