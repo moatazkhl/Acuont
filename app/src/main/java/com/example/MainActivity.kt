@@ -49,12 +49,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            SmartAccountantTheme {
+            val viewModel: AppViewModel = viewModel()
+            val isDarkMode by viewModel.isDarkMode.collectAsState()
+            SmartAccountantTheme(isDarkMode = isDarkMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AccountantAppContent()
+                    AccountantAppContent(viewModel = viewModel)
                 }
             }
         }
@@ -63,7 +65,7 @@ class MainActivity : ComponentActivity() {
 
 // Global Material 3 Color Theme
 @Composable
-fun SmartAccountantTheme(content: @Composable () -> Unit) {
+fun SmartAccountantTheme(isDarkMode: Boolean = true, content: @Composable () -> Unit) {
     val darkColorScheme = darkColorScheme(
         primary = Color(0xFF0FBD95), // Jade Green
         secondary = Color(0xFF1E3A8A), // Deep Slate Navy
@@ -74,11 +76,28 @@ fun SmartAccountantTheme(content: @Composable () -> Unit) {
         onSecondary = Color(0xFFFFFFFF),
         onBackground = Color(0xFFE2E8F0),
         onSurface = Color(0xFFF1F5F9),
+        surfaceVariant = Color(0xFF1F2937),
+        onSurfaceVariant = Color(0xFF9CA3AF),
         error = Color(0xFFEF4444)
     )
 
+    val lightColorScheme = lightColorScheme(
+        primary = Color(0xFF0D9488), // Teal/Jade Green for Light Mode
+        secondary = Color(0xFF1E3A8A), // Deep Slate Navy
+        tertiary = Color(0xFFD97706), // Golden Amber
+        background = Color(0xFFF8FAFC), // Slate super light background
+        surface = Color(0xFFFFFFFF), // Pure White
+        onPrimary = Color(0xFFFFFFFF),
+        onSecondary = Color(0xFFFFFFFF),
+        onBackground = Color(0xFF0F172A), // Slate Dark Charcoal
+        onSurface = Color(0xFF1E293B), // Slate Medium Charcoal
+        surfaceVariant = Color(0xFFF1F5F9), // Light variant contrast shadow/pills
+        onSurfaceVariant = Color(0xFF64748B), // Slate Grey for subtitle labels
+        error = Color(0xFFDC2626)
+    )
+
     MaterialTheme(
-        colorScheme = darkColorScheme,
+        colorScheme = if (isDarkMode) darkColorScheme else lightColorScheme,
         typography = Typography(),
         content = content
     )
@@ -86,9 +105,8 @@ fun SmartAccountantTheme(content: @Composable () -> Unit) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun AccountantAppContent() {
+fun AccountantAppContent(viewModel: AppViewModel = viewModel()) {
     val context = LocalContext.current
-    val viewModel: AppViewModel = viewModel()
     val scope = rememberCoroutineScope()
 
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
@@ -201,14 +219,18 @@ fun AccountantAppContent() {
                 Column(
                     modifier = Modifier.fillMaxSize()
                 ) {
+                    val isDarkMode by viewModel.isDarkMode.collectAsState()
                     // Modern Multi-Company Header Selection Bar
                     CompanyHeaderSelector(
                         activeCompany = activeCompany,
                         companies = companies,
                         onSelect = { viewModel.selectCompany(it) },
                         onAddCompany = { name, curr -> viewModel.addCompany(name, curr) },
+                        onEditCompany = { company -> viewModel.updateCompany(company) },
                         onDeleteCompany = { viewModel.deleteCompany(it) },
-                        onLogout = { viewModel.logout() }
+                        onLogout = { viewModel.logout() },
+                        isDarkMode = isDarkMode,
+                        onToggleTheme = { viewModel.toggleDarkMode() }
                     )
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
@@ -396,11 +418,15 @@ fun CompanyHeaderSelector(
     companies: List<CompanyEntity>,
     onSelect: (CompanyEntity) -> Unit,
     onAddCompany: (String, String) -> Unit,
+    onEditCompany: (CompanyEntity) -> Unit,
     onDeleteCompany: (CompanyEntity) -> Unit,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    isDarkMode: Boolean,
+    onToggleTheme: () -> Unit
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
     var showDropdown by remember { mutableStateOf(false) }
+    var editingCompany by remember { mutableStateOf<CompanyEntity?>(null) }
 
     Row(
         modifier = Modifier
@@ -411,8 +437,20 @@ fun CompanyHeaderSelector(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        IconButton(onClick = onLogout) {
-            Icon(Icons.Default.ExitToApp, contentDescription = "تسجيل خروج", tint = MaterialTheme.colorScheme.error)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            IconButton(onClick = onLogout) {
+                Icon(Icons.Default.ExitToApp, contentDescription = "تسجيل خروج", tint = MaterialTheme.colorScheme.error)
+            }
+            IconButton(onClick = onToggleTheme) {
+                Icon(
+                    imageVector = if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode,
+                    contentDescription = "تبديل المظهر",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
         }
 
         Row(
@@ -474,7 +512,7 @@ fun CompanyHeaderSelector(
                     }
 
                     LazyColumn(
-                        modifier = Modifier.heightIn(max = 250.dp),
+                        modifier = Modifier.heightIn(max = 280.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(companies) { company ->
@@ -486,28 +524,52 @@ fun CompanyHeaderSelector(
                                         if (company.id == activeCompany?.id) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                                     )
-                                    .clickable {
-                                        onSelect(company)
-                                        showDropdown = false
-                                    }
-                                    .padding(12.dp),
+                                    .padding(8.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (companies.size > 1) {
-                                    IconButton(onClick = { onDeleteCompany(company) }) {
-                                        Icon(Icons.Default.DeleteOutline, contentDescription = "حذف", tint = Color.Red)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    IconButton(
+                                        onClick = {
+                                            editingCompany = company
+                                            showDropdown = false
+                                        },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = "تعديل", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                     }
-                                } else {
-                                    Box(modifier = Modifier.size(24.dp))
+                                    if (companies.size > 1) {
+                                        IconButton(
+                                            onClick = { onDeleteCompany(company) },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(Icons.Default.DeleteOutline, contentDescription = "حذف", tint = Color.Red, modifier = Modifier.size(18.dp))
+                                        }
+                                    }
                                 }
 
-                                Text(
-                                    "${company.name} (${company.currencyLocal})",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (company.id == activeCompany?.id) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable {
+                                            onSelect(company)
+                                            showDropdown = false
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    Text(
+                                        "${company.name} (${company.currencyLocal})",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (company.id == activeCompany?.id) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                        textAlign = TextAlign.Right
+                                    )
+                                }
                             }
                         }
                     }
@@ -547,12 +609,47 @@ fun CompanyHeaderSelector(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    OutlinedTextField(
-                        value = cCurrency,
-                        onValueChange = { cCurrency = it },
-                        label = { Text("رمز العملة المحلية المهيمنة (مثل SYP او USD)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    var baseCurrencyDropdownExpanded by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = cCurrency,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("رمز العملة المحلية المهيمنة (اختر من القائمة)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Default.ArrowDropDown,
+                                    contentDescription = "قائمة منسدلة"
+                                )
+                            }
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { baseCurrencyDropdownExpanded = true }
+                        )
+                        DropdownMenu(
+                            expanded = baseCurrencyDropdownExpanded,
+                            onDismissRequest = { baseCurrencyDropdownExpanded = false }
+                        ) {
+                            listOf(
+                                Pair("SYP", "ليرة سورية"),
+                                Pair("USD", "دولار أمريكي"),
+                                Pair("EUR", "يورو أوروبي"),
+                                Pair("SAR", "ريال سعودي"),
+                                Pair("AED", "درهم إماراتي")
+                            ).forEach { (code, name) ->
+                                DropdownMenuItem(
+                                    text = { Text("$code - $name") },
+                                    onClick = {
+                                        cCurrency = code
+                                        baseCurrencyDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -576,6 +673,101 @@ fun CompanyHeaderSelector(
                             modifier = Modifier.weight(1f)
                         ) {
                             Text("حفظ", color = Color.Black)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (editingCompany != null) {
+        var editName by remember { mutableStateOf(editingCompany!!.name) }
+        var editCurrency by remember { mutableStateOf(editingCompany!!.currencyLocal) }
+
+        Dialog(onDismissRequest = { editingCompany = null }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("تعديل بيانات الشركة", fontWeight = FontWeight.Black, fontSize = 16.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Right)
+
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text("اسم الشركة أو النشاط") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    var editCurrencyDropdownExpanded by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = editCurrency,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("العملة المحلية المهيمنة (اختر من القائمة)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Default.ArrowDropDown,
+                                    contentDescription = "قائمة منسدلة"
+                                )
+                            }
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { editCurrencyDropdownExpanded = true }
+                        )
+                        DropdownMenu(
+                            expanded = editCurrencyDropdownExpanded,
+                            onDismissRequest = { editCurrencyDropdownExpanded = false }
+                        ) {
+                            listOf(
+                                Pair("SYP", "ليرة سورية"),
+                                Pair("USD", "دولار أمريكي"),
+                                Pair("EUR", "يورو أوروبي"),
+                                Pair("SAR", "ريال سعودي"),
+                                Pair("AED", "درهم إماراتي")
+                            ).forEach { (code, name) ->
+                                DropdownMenuItem(
+                                    text = { Text("$code - $name") },
+                                    onClick = {
+                                        editCurrency = code
+                                        editCurrencyDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { editingCompany = null },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("إلغاء")
+                        }
+                        Button(
+                            onClick = {
+                                if (editName.isNotBlank() && editCurrency.isNotBlank()) {
+                                    onEditCompany(editingCompany!!.copy(name = editName, currencyLocal = editCurrency))
+                                    editingCompany = null
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("حفظ التغييرات", color = Color.Black)
                         }
                     }
                 }
@@ -762,6 +954,77 @@ fun StatCard(title: String, value: String, icon: androidx.compose.ui.graphics.ve
     }
 }
 
+private fun printStatement(
+    context: android.content.Context,
+    accountName: String,
+    accountType: String,
+    currency: String,
+    balance: Double,
+    invoices: List<InvoiceEntity>,
+    vouchers: List<VoucherEntity>
+) {
+    val sizeStyle = "width: 100%; border-collapse: collapse; direction: rtl; text-align: right;"
+    val html = """
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body { font-family: sans-serif; direction: rtl; text-align: right; padding: 20px; }
+                header { margin-bottom: 20px; border-bottom: 2px solid #0FBD95; padding-bottom: 10px; }
+                h1 { margin: 0; color: #0FBD95; }
+                table { $sizeStyle margin-top: 20px; }
+                th, td { border: 1px solid #ddd; padding: 8px; }
+                th { background-color: #f2f2f2; }
+                .amount-positive { color: green; font-weight: bold; }
+                .amount-negative { color: red; font-weight: bold; }
+            </style>
+        </head>
+        <body>
+            <header>
+                <h1>كشف حساب مالي رسمي</h1>
+                <p><strong>الحساب:</strong> $accountName ($accountType)</p>
+                <p><strong>العملة الأساسية:</strong> $currency</p>
+                <p><strong>الرصيد الإجمالي:</strong> <span class="${if (balance >= 0) "amount-positive" else "amount-negative"}">${String.format("%.2f", balance)} $currency</span></p>
+            </header>
+            
+            <h3>سجل العمليات والفواتير التفصيلي</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>التاريخ</th>
+                        <th>البيان / نوع العملية</th>
+                        <th>المبلغ بالعملة</th>
+                        <th>سعر الصرف</th>
+                        <th>القيمة بالعملة المحلية</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${invoices.joinToString("") { inv ->
+                        val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(inv.date))
+                        "<tr><td>$dateStr</td><td>فاتورة ${inv.type} رقم ${inv.invoiceNumber}</td><td>${inv.totalAmountForeign} ${inv.currencyCode}</td><td>${inv.exchangeRate}</td><td>${inv.totalAmountLocal}</td></tr>"
+                    }}
+                    ${vouchers.joinToString("") { v ->
+                        val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(v.date))
+                        "<tr><td>$dateStr</td><td>سند ${v.type} (${v.notes})</td><td>${v.amountForeign} ${v.currencyCode}</td><td>${v.exchangeRate}</td><td>${v.amountLocal}</td></tr>"
+                    }}
+                </tbody>
+            </table>
+        </body>
+        </html>
+    """.trimIndent()
+
+    val webView = android.webkit.WebView(context)
+    webView.webViewClient = object : android.webkit.WebViewClient() {
+        override fun onPageFinished(view: android.webkit.WebView, url: String) {
+            val printManager = context.getSystemService(android.content.Context.PRINT_SERVICE) as? android.print.PrintManager
+            val jobName = "كشف حساب - $accountName"
+            val printAdapter = view.createPrintDocumentAdapter(jobName)
+            printManager?.print(jobName, printAdapter, android.print.PrintAttributes.Builder().build())
+        }
+    }
+    webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+}
+
 // ---------------------------------------------------------
 // 4. ACCOUNTS & CURRENCIES TAB
 // ---------------------------------------------------------
@@ -776,6 +1039,10 @@ fun AccountsScreen(
     var showAddAccount by remember { mutableStateOf(false) }
     var showAddCurrency by remember { mutableStateOf(false) }
     var accountStatementAccount by remember { mutableStateOf<AccountEntity?>(null) }
+    var editingAccount by remember { mutableStateOf<AccountEntity?>(null) }
+    var confirmDeleteAccount by remember { mutableStateOf<AccountEntity?>(null) }
+    var selectedInvoiceForEdit by remember { mutableStateOf<InvoiceEntity?>(null) }
+    var selectedVoucherForEdit by remember { mutableStateOf<VoucherEntity?>(null) }
 
     Column(
         modifier = Modifier
@@ -870,8 +1137,30 @@ fun AccountsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Left balance and details button
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            // Left actions, balance, and details button
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                IconButton(
+                                    onClick = { confirmDeleteAccount = acc },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.DeleteOutline,
+                                        contentDescription = "حذف الحساب",
+                                        tint = Color.Red,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { editingAccount = acc },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = "تعديل الحساب",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                                 Button(
                                     onClick = { accountStatementAccount = acc },
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
@@ -957,12 +1246,41 @@ fun AccountsScreen(
                         }
                     }
 
-                    OutlinedTextField(
-                        value = currencyCode,
-                        onValueChange = { currencyCode = it },
-                        label = { Text("رمز العملة الخاصة بالتعامل") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    var currencyDropdownExpanded by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = currencyCode,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("رمز العملة الخاصة بالتعامل (اختر من القائمة)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Default.ArrowDropDown,
+                                    contentDescription = "قائمة منسدلة"
+                                )
+                            }
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { currencyDropdownExpanded = true }
+                        )
+                        DropdownMenu(
+                            expanded = currencyDropdownExpanded,
+                            onDismissRequest = { currencyDropdownExpanded = false }
+                        ) {
+                            currencies.forEach { c ->
+                                DropdownMenuItem(
+                                    text = { Text("${c.code} - ${c.name} (${c.rateToLocal})") },
+                                    onClick = {
+                                        currencyCode = c.code
+                                        currencyDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
 
                     OutlinedTextField(
                         value = phone,
@@ -1060,38 +1378,476 @@ fun AccountsScreen(
 
     // Account statement simulator
     if (accountStatementAccount != null) {
+        val context = LocalContext.current
         val acc = accountStatementAccount!!
         val listVouchers = viewModel.vouchers.collectAsState().value.filter { it.accountId == acc.id }
         val listInvoices = viewModel.invoices.collectAsState().value.filter { it.accountId == acc.id }
+        val finalBalance = viewModel.getAccountBalance(acc.id)
+
+        // Combine into interactive chronological stream
+        val transactions = remember(listInvoices, listVouchers) {
+            val combined = (listInvoices.map { "invoice" to it } + listVouchers.map { "voucher" to it })
+            combined.sortedByDescending { pair ->
+                if (pair.first == "invoice") (pair.second as InvoiceEntity).date else (pair.second as VoucherEntity).date
+            }
+        }
 
         Dialog(onDismissRequest = { accountStatementAccount = null }) {
             Card(modifier = Modifier.fillMaxWidth().padding(12.dp), shape = RoundedCornerShape(16.dp)) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("كشف حساب مالي رسمي", fontWeight = FontWeight.Black, fontSize = 16.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                    Text("كشف حساب مالي تفاعلي", fontWeight = FontWeight.Black, fontSize = 16.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.primary)
                     Text("الحساب: ${acc.name} (${acc.type}) - العملة: ${acc.currencyCode}", fontSize = 12.sp, textAlign = TextAlign.Right, modifier = Modifier.fillMaxWidth())
+                    Text("الرصيد الكلي الحالي: ${String.format("%.2f %s", finalBalance, acc.currencyCode)}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (finalBalance >= 0) MaterialTheme.colorScheme.primary else Color.Red, textAlign = TextAlign.Right, modifier = Modifier.fillMaxWidth())
 
                     HorizontalDivider()
 
+                    Text("اضغط على أي عملية أدناه لتعديلها أو حذفها:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Right)
+
                     LazyColumn(modifier = Modifier.height(260.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(listInvoices) { inv ->
-                            Row(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("${inv.totalAmountForeign} ${inv.currencyCode}", color = MaterialTheme.colorScheme.primary)
-                                Text("فاتورة ${inv.type} رقم ${inv.invoiceNumber}", fontSize = 12.sp)
-                            }
-                        }
-                        items(listVouchers) { v ->
-                            Row(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("${v.amountForeign} ${v.currencyCode}", color = MaterialTheme.colorScheme.tertiary)
-                                Text("سند ${v.type} (${v.notes})", fontSize = 12.sp)
+                        items(transactions) { pair ->
+                            val isInvoice = pair.first == "invoice"
+                            if (isInvoice) {
+                                val inv = pair.second as InvoiceEntity
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(MaterialTheme.colorScheme.background.copy(alpha = 0.8f))
+                                        .clickable { selectedInvoiceForEdit = inv }
+                                        .padding(8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Receipt, contentDescription = "فاتورة", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                    Text("${inv.totalAmountForeign} ${inv.currencyCode}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                    Text("فاتورة ${inv.type} رقم ${inv.invoiceNumber}", fontSize = 12.sp)
+                                }
+                            } else {
+                                val v = pair.second as VoucherEntity
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(MaterialTheme.colorScheme.background.copy(alpha = 0.8f))
+                                        .clickable { selectedVoucherForEdit = v }
+                                        .padding(8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Payment, contentDescription = "سند دفع/قبض", tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(16.dp))
+                                    Text("${v.amountForeign} ${v.currencyCode}", color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.Bold)
+                                    Text("سند ${v.type} (${v.notes})", fontSize = 12.sp)
+                                }
                             }
                         }
                     }
 
-                    Button(
-                        onClick = { accountStatementAccount = null },
-                        modifier = Modifier.fillMaxWidth()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("إغلاق الكشف")
+                        Button(
+                            onClick = {
+                                printStatement(
+                                    context = context,
+                                    accountName = acc.name,
+                                    accountType = acc.type,
+                                    currency = acc.currencyCode,
+                                    balance = finalBalance,
+                                    invoices = listInvoices,
+                                    vouchers = listVouchers
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
+                            modifier = Modifier.weight(1.3f)
+                        ) {
+                            Icon(Icons.Default.Print, contentDescription = "طباعة", tint = Color.Black, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("طباعة الكشف", color = Color.Black, fontSize = 11.sp)
+                        }
+
+                        Button(
+                            onClick = { accountStatementAccount = null },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("إغلاق الكشف", fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Interactive Edit Account Dialog
+    if (editingAccount != null) {
+        val originalAcc = editingAccount!!
+        var editName by remember { mutableStateOf(originalAcc.name) }
+        var editSelectedType by remember { mutableStateOf(originalAcc.type) }
+        var editCurrencyCode by remember { mutableStateOf(originalAcc.currencyCode) }
+        var editPhone by remember { mutableStateOf(originalAcc.phone) }
+        var editNotes by remember { mutableStateOf(originalAcc.notes) }
+
+        Dialog(onDismissRequest = { editingAccount = null }) {
+            Card(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp)) {
+                Column(modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("تعديل كارت حساب مالي", fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Right)
+
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text("الاسم الكامل للحساب") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Type Row Selection
+                    Text("نوع التصنيف الحسابي:", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Right)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf("زبون", "مورد", "مصاريف").forEach { t ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (editSelectedType == t) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.background)
+                                    .clickable { editSelectedType = t }
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(t, fontSize = 11.sp, color = if (editSelectedType == t) Color.Black else Color.White)
+                            }
+                        }
+                    }
+
+                    var currencyDropdownExpanded by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = editCurrencyCode,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("رمز العملة الخاصة بالتعامل (اختر من القائمة)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Default.ArrowDropDown,
+                                    contentDescription = "قائمة منسدلة"
+                                )
+                            }
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { currencyDropdownExpanded = true }
+                        )
+                        DropdownMenu(
+                            expanded = currencyDropdownExpanded,
+                            onDismissRequest = { currencyDropdownExpanded = false }
+                        ) {
+                            currencies.forEach { c ->
+                                DropdownMenuItem(
+                                    text = { Text("${c.code} - ${c.name} (${c.rateToLocal})") },
+                                    onClick = {
+                                        editCurrencyCode = c.code
+                                        currencyDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = editPhone,
+                        onValueChange = { editPhone = it },
+                        label = { Text("رقم الهاتف (اختياري)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = editNotes,
+                        onValueChange = { editNotes = it },
+                        label = { Text("ملاحظات إضافية") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { editingAccount = null }, colors = ButtonDefaults.buttonColors(containerColor = Color.Gray), modifier = Modifier.weight(1f)) {
+                            Text("إلغاء")
+                        }
+                        Button(
+                            onClick = {
+                                if (editName.isNotBlank()) {
+                                    viewModel.updateAccount(originalAcc.copy(
+                                        name = editName,
+                                        type = editSelectedType,
+                                        currencyCode = editCurrencyCode,
+                                        phone = editPhone,
+                                        notes = editNotes
+                                    ))
+                                    editingAccount = null
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("حفظ التعديل", color = Color.Black)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Delete Account Confirmation Dialog
+    if (confirmDeleteAccount != null) {
+        val acc = confirmDeleteAccount!!
+        Dialog(onDismissRequest = { confirmDeleteAccount = null }) {
+            Card(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp)) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("تأكيد حذف الحساب", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Right, color = MaterialTheme.colorScheme.error)
+                    Text("هل أنت متأكد تماماً من رغبتك في حذف الحساب: \"${acc.name}\"؟", fontSize = 13.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Right)
+                    Text("تنبيه: سيؤدي هذا لتفريغ الحساب ولكن المعاملات المالية المرتبطة به ستظل تالفة أو معلقة تاريخياً.", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Right)
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { confirmDeleteAccount = null }, colors = ButtonDefaults.buttonColors(containerColor = Color.Gray), modifier = Modifier.weight(1f)) {
+                            Text("إلغاء")
+                        }
+                        Button(
+                            onClick = {
+                                viewModel.deleteAccount(acc)
+                                confirmDeleteAccount = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("نعم، احذف الحساب", color = Color.White)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Interactive Edit Invoice Dialog
+    if (selectedInvoiceForEdit != null) {
+        val originalInv = selectedInvoiceForEdit!!
+        var editType by remember { mutableStateOf(originalInv.type) }
+        var editCurrencyCode by remember { mutableStateOf(originalInv.currencyCode) }
+        var editExchangeRate by remember { mutableStateOf(originalInv.exchangeRate.toString()) }
+        var editDiscount by remember { mutableStateOf(originalInv.discount.toString()) }
+        var editTotalAmtFor by remember { mutableStateOf(originalInv.totalAmountForeign.toString()) }
+        
+        // Parse items
+        val parsedItems = remember(originalInv) {
+            try {
+                Json.decodeFromString<List<InvoiceItem>>(originalInv.detailsJson)
+            } catch (e: Exception) {
+                emptyList<InvoiceItem>()
+            }
+        }
+
+        Dialog(onDismissRequest = { selectedInvoiceForEdit = null }) {
+            Card(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp)) {
+                Column(modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("عمليات الفاتورة رقم ${originalInv.invoiceNumber}", fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Right)
+                    
+                    // Show parsed items in invoice
+                    if (parsedItems.isNotEmpty()) {
+                        Text("محتويات الفاتورة:", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Right)
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))) {
+                            Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                parsedItems.forEach { item ->
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("${item.quantity} x ${item.unitPrice} ${originalInv.currencyCode}", fontSize = 11.sp)
+                                        Text(item.name, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Tweak Fields
+                    OutlinedTextField(
+                        value = editTotalAmtFor,
+                        onValueChange = { editTotalAmtFor = it },
+                        label = { Text("القيمة الإجمالية الأجنبية") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = editDiscount,
+                        onValueChange = { editDiscount = it },
+                        label = { Text("الحسم (المحلي)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = editExchangeRate,
+                        onValueChange = { editExchangeRate = it },
+                        label = { Text("سعر الصرف") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Type row
+                    Text("نوع الفاتورة:", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Right)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf("مبيع", "شراء", "مردود مبيعات", "مردود مشتريات").forEach { t ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (editType == t) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.background)
+                                    .clickable { editType = t }
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(t, fontSize = 10.sp, color = if (editType == t) Color.Black else Color.White)
+                            }
+                        }
+                    }
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                viewModel.deleteInvoice(originalInv)
+                                selectedInvoiceForEdit = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("حذف الفاتورة", color = Color.White, fontSize = 11.sp)
+                        }
+
+                        Button(
+                            onClick = {
+                                val dAmtFor = editTotalAmtFor.toDoubleOrNull() ?: originalInv.totalAmountForeign
+                                val dRate = editExchangeRate.toDoubleOrNull() ?: originalInv.exchangeRate
+                                val dDisc = editDiscount.toDoubleOrNull() ?: originalInv.discount
+                                val dLocAmt = dAmtFor * dRate - dDisc
+
+                                viewModel.updateInvoice(originalInv.copy(
+                                    type = editType,
+                                    exchangeRate = dRate,
+                                    discount = dDisc,
+                                    totalAmountForeign = dAmtFor,
+                                    totalAmountLocal = dLocAmt
+                                ))
+                                selectedInvoiceForEdit = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("حفظ", color = Color.Black, fontSize = 11.sp)
+                        }
+                        
+                        Button(
+                            onClick = { selectedInvoiceForEdit = null },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
+                            modifier = Modifier.weight(1.2f)
+                        ) {
+                            Text("إلغاء", fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Interactive Edit Voucher Dialog
+    if (selectedVoucherForEdit != null) {
+        val originalVoucher = selectedVoucherForEdit!!
+        var editType by remember { mutableStateOf(originalVoucher.type) }
+        var editAmtFor by remember { mutableStateOf(originalVoucher.amountForeign.toString()) }
+        var editCurrencyCode by remember { mutableStateOf(originalVoucher.currencyCode) }
+        var editExchangeRate by remember { mutableStateOf(originalVoucher.exchangeRate.toString()) }
+        var editNotes by remember { mutableStateOf(originalVoucher.notes) }
+
+        Dialog(onDismissRequest = { selectedVoucherForEdit = null }) {
+            Card(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp)) {
+                Column(modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("عمليات على سند ${originalVoucher.type}", fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Right)
+
+                    OutlinedTextField(
+                        value = editAmtFor,
+                        onValueChange = { editAmtFor = it },
+                        label = { Text("المبلغ (بالعملة الأجنبية/الخاصة)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = editExchangeRate,
+                        onValueChange = { editExchangeRate = it },
+                        label = { Text("سعر الصرف") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = editNotes,
+                        onValueChange = { editNotes = it },
+                        label = { Text("البيان وملاحظات السند") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Type Row Selection
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf("قبض", "صرف").forEach { t ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (editType == t) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.background)
+                                    .clickable { editType = t }
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(t, fontSize = 11.sp, color = if (editType == t) Color.Black else Color.White)
+                            }
+                        }
+                    }
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                viewModel.deleteVoucher(originalVoucher)
+                                selectedVoucherForEdit = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("حذف السند", color = Color.White, fontSize = 11.sp)
+                        }
+
+                        Button(
+                            onClick = {
+                                val dAmtFor = editAmtFor.toDoubleOrNull() ?: originalVoucher.amountForeign
+                                val dRate = editExchangeRate.toDoubleOrNull() ?: originalVoucher.exchangeRate
+                                val dAmtLoc = dAmtFor * dRate
+
+                                viewModel.updateVoucher(originalVoucher.copy(
+                                    type = editType,
+                                    amountForeign = dAmtFor,
+                                    exchangeRate = dRate,
+                                    amountLocal = dAmtLoc,
+                                    notes = editNotes
+                                ))
+                                selectedVoucherForEdit = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("حفظ", color = Color.Black, fontSize = 11.sp)
+                        }
+                        
+                        Button(
+                            onClick = { selectedVoucherForEdit = null },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
+                            modifier = Modifier.weight(1.2f)
+                        ) {
+                            Text("إلغاء", fontSize = 11.sp)
+                        }
                     }
                 }
             }
@@ -1502,14 +2258,44 @@ fun FinancialsScreen(
                         }
                     }
 
+                    var invoiceCurrencyDropdownExpanded by remember { mutableStateOf(false) }
                     // Exchange rates & foreign indicators
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = currencySelected,
-                            onValueChange = { currencySelected = it },
-                            label = { Text("عملة الفاتورة") },
-                            modifier = Modifier.weight(1f)
-                        )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            OutlinedTextField(
+                                value = currencySelected,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("عملة الفاتورة (اختر)") },
+                                modifier = Modifier.fillMaxWidth(),
+                                trailingIcon = {
+                                    Icon(
+                                        Icons.Default.ArrowDropDown,
+                                        contentDescription = "قائمة منسدلة"
+                                    )
+                                }
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clickable { invoiceCurrencyDropdownExpanded = true }
+                            )
+                            DropdownMenu(
+                                expanded = invoiceCurrencyDropdownExpanded,
+                                onDismissRequest = { invoiceCurrencyDropdownExpanded = false }
+                            ) {
+                                currencies.forEach { c ->
+                                    DropdownMenuItem(
+                                        text = { Text("${c.code} - ${c.name}") },
+                                        onClick = {
+                                            currencySelected = c.code
+                                            exchangeRate = c.rateToLocal.toString()
+                                            invoiceCurrencyDropdownExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
                         OutlinedTextField(
                             value = exchangeRate,
                             onValueChange = { exchangeRate = it },
@@ -1694,12 +2480,42 @@ fun FinancialsScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    OutlinedTextField(
-                        value = currencyCode,
-                        onValueChange = { currencyCode = it },
-                        label = { Text("رمز العملة") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    var voucherCurrencyDropdownExpanded by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = currencyCode,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("رمز العملة (اختر من القائمة)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Default.ArrowDropDown,
+                                    contentDescription = "قائمة منسدلة"
+                                )
+                            }
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { voucherCurrencyDropdownExpanded = true }
+                        )
+                        DropdownMenu(
+                            expanded = voucherCurrencyDropdownExpanded,
+                            onDismissRequest = { voucherCurrencyDropdownExpanded = false }
+                        ) {
+                            currencies.forEach { c ->
+                                DropdownMenuItem(
+                                    text = { Text("${c.code} - ${c.name}") },
+                                    onClick = {
+                                        currencyCode = c.code
+                                        exchangeRate = c.rateToLocal.toString()
+                                        voucherCurrencyDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
 
                     OutlinedTextField(
                         value = exchangeRate,

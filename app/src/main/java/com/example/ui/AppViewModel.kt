@@ -36,6 +36,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val adminPhone = "9933210618"
     val adminPassword = "123456"
 
+    // Theme state
+    val isDarkMode = MutableStateFlow(true)
+    fun toggleDarkMode() {
+        isDarkMode.value = !isDarkMode.value
+    }
+
     // Active Company Mode
     val allCompanies = repository.allCompaniesFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -144,6 +150,30 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val id = repository.insertCompany(CompanyEntity(name = name, currencyLocal = currencyLocal)).toInt()
             // Add native currency
             repository.insertCurrency(CurrencyEntity(companyId = id, code = currencyLocal, name = "العملة المحلية ($currencyLocal)", rateToLocal = 1.0))
+            
+            // Auto seed baseline basic trade currencies (USD, EUR, SAR, AED, SYP) for immediate multi-currency conversion support in new company accounts:
+            if (currencyLocal == "SYP") {
+                repository.insertCurrency(CurrencyEntity(companyId = id, code = "USD", name = "دولار أمريكي", rateToLocal = 15000.0))
+                repository.insertCurrency(CurrencyEntity(companyId = id, code = "EUR", name = "يورو أوروبي", rateToLocal = 16200.0))
+                repository.insertCurrency(CurrencyEntity(companyId = id, code = "SAR", name = "ريال سعودي", rateToLocal = 4000.0))
+                repository.insertCurrency(CurrencyEntity(companyId = id, code = "AED", name = "درهم إماراتي", rateToLocal = 4080.0))
+            } else {
+                if (currencyLocal != "USD") {
+                    repository.insertCurrency(CurrencyEntity(companyId = id, code = "USD", name = "دولار أمريكي", rateToLocal = if (currencyLocal == "EUR") 0.92 else if (currencyLocal == "SAR") 0.27 else 0.1))
+                }
+                if (currencyLocal != "EUR") {
+                    repository.insertCurrency(CurrencyEntity(companyId = id, code = "EUR", name = "يورو أوروبي", rateToLocal = if (currencyLocal == "USD") 1.08 else 0.11))
+                }
+                if (currencyLocal != "SAR") {
+                    repository.insertCurrency(CurrencyEntity(companyId = id, code = "SAR", name = "ريال سعودي", rateToLocal = if (currencyLocal == "USD") 3.75 else 0.4))
+                }
+                if (currencyLocal != "AED") {
+                    repository.insertCurrency(CurrencyEntity(companyId = id, code = "AED", name = "درهم إماراتي", rateToLocal = if (currencyLocal == "USD") 3.67 else 0.4))
+                }
+                if (currencyLocal != "SYP") {
+                    repository.insertCurrency(CurrencyEntity(companyId = id, code = "SYP", name = "ليرة سورية", rateToLocal = if (currencyLocal == "USD") 15000.0 else 1.0))
+                }
+            }
         }
     }
 
