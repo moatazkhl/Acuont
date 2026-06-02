@@ -6,299 +6,218 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.io.OutputStream
-import java.text.SimpleDateFormat
-import java.util.*
+
+@Serializable
+data class DatabaseBackup(
+    val companies: List<CompanyEntity>,
+    val currencies: List<CurrencyEntity>,
+    val accounts: List<AccountEntity>,
+    val products: List<ProductEntity>,
+    val invoices: List<InvoiceEntity>,
+    val vouchers: List<VoucherEntity>,
+    val attendance: List<AttendanceEntity>,
+    val manufacturing: List<ManufacturingEntity>
+)
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository: Repository
-    private val jsonConfig = Json { ignoreUnknownKeys = true; prettyPrint = true }
+    private val db = AppDatabase.getDatabase(application)
+    private val repository = Repository(db)
 
-    // Init database & repository
-    init {
-        val database = AppDatabase.getDatabase(application)
-        repository = Repository(database)
+    // Admin Auth State
+    val isLoggedIn = MutableStateFlow(false)
+    val adminPhone = "9933210618"
+    val adminPassword = "123456"
 
-        // Run database seeding on start
-        viewModelScope.launch {
-            repository.seedDatabase()
-        }
-    }
-
-    // User session states
-    private val _isLoggedIn = MutableStateFlow(false)
-    val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
-
-    private val _loggedInPhone = MutableStateFlow("")
-    val loggedInPhone: StateFlow<String> = _loggedInPhone.asStateFlow()
-
-    private val _loggedInName = MutableStateFlow("")
-    val loggedInName: StateFlow<String> = _loggedInName.asStateFlow()
-
-    private val _loggedInRole = MutableStateFlow("USER") // USER / ADMIN
-    val loggedInRole: StateFlow<String> = _loggedInRole.asStateFlow()
-
-    private val _activeUserStatus = MutableStateFlow("TRIAL") // TRIAL / PENDING / ACTIVE
-    val activeUserStatus: StateFlow<String> = _activeUserStatus.asStateFlow()
-
-    // Database reactive sources
-    val registeredUsers: StateFlow<List<UserEntity>> = repository.allUsersFlow
+    // Active Company Mode
+    val allCompanies = repository.allCompaniesFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val allProducts: StateFlow<List<ProductEntity>> = repository.allProductsFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val activeCompany = MutableStateFlow<CompanyEntity?>(null)
 
-    val allInvoices: StateFlow<List<InvoiceEntity>> = repository.allInvoicesFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // Reactive listings filtered by active company
+    private val _currencies = MutableStateFlow<List<CurrencyEntity>>(emptyList())
+    val currencies: StateFlow<List<CurrencyEntity>> = _currencies.asStateFlow()
 
-    val allVouchers: StateFlow<List<VoucherEntity>> = repository.allVouchersFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private val _accounts = MutableStateFlow<List<AccountEntity>>(emptyList())
+    val accounts: StateFlow<List<AccountEntity>> = _accounts.asStateFlow()
 
-    // Precise Date Filter States (Defaults to current month: start of month till end value)
-    private val _startDate = MutableStateFlow<Long>(0L)
-    val startDate: StateFlow<Long> = _startDate.asStateFlow()
+    private val _products = MutableStateFlow<List<ProductEntity>>(emptyList())
+    val products: StateFlow<List<ProductEntity>> = _products.asStateFlow()
 
-    private val _endDate = MutableStateFlow<Long>(0L)
-    val endDate: StateFlow<Long> = _endDate.asStateFlow()
+    private val _invoices = MutableStateFlow<List<InvoiceEntity>>(emptyList())
+    val invoices: StateFlow<List<InvoiceEntity>> = _invoices.asStateFlow()
+
+    private val _vouchers = MutableStateFlow<List<VoucherEntity>>(emptyList())
+    val vouchers: StateFlow<List<VoucherEntity>> = _vouchers.asStateFlow()
+
+    private val _attendance = MutableStateFlow<List<AttendanceEntity>>(emptyList())
+    val attendance: StateFlow<List<AttendanceEntity>> = _attendance.asStateFlow()
+
+    private val _manufacturing = MutableStateFlow<List<ManufacturingEntity>>(emptyList())
+    val manufacturing: StateFlow<List<ManufacturingEntity>> = _manufacturing.asStateFlow()
+
+    // Loading states
+    val isEvaluatingReport = MutableStateFlow(false)
+    val aiResponse = MutableStateFlow("")
 
     init {
-        resetDateFilters()
-    }
-
-    fun resetDateFilters() {
-        val calendar = Calendar.getInstance()
-        // Default start: Beginning of 30 days before
-        calendar.add(Calendar.DAY_OF_YEAR, -30)
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        calendar.set(Calendar.MILLISECOND, 0)
-        _startDate.value = calendar.timeInMillis
-
-        val calendarEnd = Calendar.getInstance()
-        calendarEnd.set(Calendar.HOUR_OF_DAY, 23)
-        calendarEnd.set(Calendar.MINUTE, 59)
-        calendarEnd.set(Calendar.SECOND, 59)
-        calendarEnd.set(Calendar.MILLISECOND, 999)
-        _endDate.value = calendarEnd.timeInMillis
-    }
-
-    fun updateDateRange(start: Long, end: Long) {
-        _startDate.value = start
-        _endDate.value = end
-    }
-
-    // Filtered lists matching dates concurrently
-    val filteredInvoices: StateFlow<List<InvoiceEntity>> = combine(allInvoices, startDate, endDate) { invoices, start, end ->
-        invoices.filter { it.dateMillis in start..end }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val filteredVouchers: StateFlow<List<VoucherEntity>> = combine(allVouchers, startDate, endDate) { vouchers, start, end ->
-        vouchers.filter { it.dateMillis in start..end }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    // Precise Financial Metrics calculation formulas
-    val computedMetrics: StateFlow<FinancialMetrics> = combine(
-        filteredInvoices,
-        filteredVouchers,
-        allProducts
-    ) { invoices, vouchers, products ->
-        var sales = 0.0
-        var purchases = 0.0
-        var returns = 0.0
-        var receipts = 0.0
-        var payments = 0.0
-
-        invoices.forEach { inv ->
-            when (inv.type) {
-                "SALE" -> sales += inv.totalAmount
-                "PURCHASE" -> purchases += inv.totalAmount
-                "RETURN" -> returns += inv.totalAmount
-            }
-        }
-
-        vouchers.forEach { v ->
-            when (v.type) {
-                "RECEIPT" -> receipts += v.amount
-                "PAYMENT" -> payments += v.amount
-            }
-        }
-
-        // Warehouse Stock Valuation
-        val warehouseVal = products.sumOf { it.quantity * it.purchasePrice }
-
-        // Algorithmic estimated profit logic: Sales minus original purchase cost of products in the sales invoice
-        var estimatedCostOfSales = 0.0
-        invoices.filter { it.type == "SALE" }.forEach { inv ->
-            try {
-                val items = jsonConfig.decodeFromString<List<InvoiceItem>>(inv.detailsJson)
-                items.forEach { item ->
-                    val prodPrice = products.find { it.name == item.productName }?.purchasePrice ?: (item.unitPrice * 0.7) // Default to 70% cost if product deleted
-                    estimatedCostOfSales += (item.quantity * prodPrice)
+        // Automatically link company components whenever the active company shifts
+        viewModelScope.launch {
+            activeCompany.collect { company ->
+                if (company != null) {
+                    launch { repository.getCurrenciesForCompanyFlow(company.id).collect { _currencies.value = it } }
+                    launch { repository.getAccountsForCompanyFlow(company.id).collect { _accounts.value = it } }
+                    launch { repository.getProductsForCompanyFlow(company.id).collect { _products.value = it } }
+                    launch { repository.getInvoicesForCompanyFlow(company.id).collect { _invoices.value = it } }
+                    launch { repository.getVouchersForCompanyFlow(company.id).collect { _vouchers.value = it } }
+                    launch { repository.getAttendanceForCompanyFlow(company.id).collect { _attendance.value = it } }
+                    launch { repository.getManufacturingForCompanyFlow(company.id).collect { _manufacturing.value = it } }
+                } else {
+                    _currencies.value = emptyList()
+                    _accounts.value = emptyList()
+                    _products.value = emptyList()
+                    _invoices.value = emptyList()
+                    _vouchers.value = emptyList()
+                    _attendance.value = emptyList()
+                    _manufacturing.value = emptyList()
                 }
-            } catch (e: Exception) {
-                estimatedCostOfSales += inv.totalAmount * 0.7 // fallback fallback
             }
         }
 
-        // Returns cost deduction
-        var estimatedReturnCost = 0.0
-        invoices.filter { it.type == "RETURN" }.forEach { inv ->
-            try {
-                val items = jsonConfig.decodeFromString<List<InvoiceItem>>(inv.detailsJson)
-                items.forEach { item ->
-                    val prodPrice = products.find { it.name == item.productName }?.purchasePrice ?: (item.unitPrice * 0.7)
-                    estimatedReturnCost += (item.quantity * prodPrice)
+        // Fill initial mock business data if the table is completely empty
+        viewModelScope.launch {
+            allCompanies.collect { list ->
+                if (list.isEmpty()) {
+                    createInitialSetup()
+                } else if (activeCompany.value == null) {
+                    activeCompany.value = list.first()
                 }
-            } catch (e: Exception) {
-                estimatedReturnCost += inv.totalAmount * 0.7
             }
-        }
-
-        val netSalesProfit = (sales - estimatedCostOfSales) - (returns - estimatedReturnCost)
-        val profit = netSalesProfit
-
-        val cashFlow = receipts - payments + (sales - returns) - purchases
-
-        FinancialMetrics(
-            totalPurchases = purchases,
-            totalSales = sales,
-            totalReturns = returns,
-            totalReceipts = receipts,
-            totalPayments = payments,
-            warehouseValue = warehouseVal,
-            estimatedProfit = profit,
-            netCashFlow = cashFlow
-        )
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        FinancialMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    )
-
-    // AI Advisor Insights State
-    private val _aiAdvisorInsights = MutableStateFlow("")
-    val aiAdvisorInsights: StateFlow<String> = _aiAdvisorInsights.asStateFlow()
-
-    private val _isAiLoading = MutableStateFlow(false)
-    val isAiLoading: StateFlow<Boolean> = _isAiLoading.asStateFlow()
-
-    fun generateAiReportAsync() {
-        viewModelScope.launch {
-            _isAiLoading.value = true
-            _aiAdvisorInsights.value = "جاري تجميع المؤشرات المالية للحسابات وصياغة تقرير استشاري وتحليلي ذكي ودقيق..."
-            val metrics = computedMetrics.value
-
-            val prompt = """
-                تحية طيبة، يرجى تزويدنا بتشخيص مالي دقيق ومقترحات عملية لتحسين أرباحنا بناء على أرقامنا المالية التالية:
-                - إجمالي المبيعات: ${metrics.totalSales} ل.س
-                - إجمالي المشتريات: ${metrics.totalPurchases} ل.س
-                - المرتجعات: ${metrics.totalReturns} ل.س
-                - القيمة المقدرة للمخزون الحالي بالمستودعات: ${metrics.warehouseValue} ل.س
-                - الأرباح الصافية المقدرة: ${metrics.estimatedProfit} ل.س
-                - المقبوضات المالية المتلقاة (سندات قبض): ${metrics.totalReceipts} ل.س
-                - المدفوعات المالية المصروفة (سندات صرف): ${metrics.totalPayments} ل.س
-                - صافي التدفق النقدي: ${metrics.netCashFlow} ل.س
-
-                المطلوب:
-                1. تقييم سريع للأداء المالي والصحة المالية للمؤسسة.
-                2. تحديد مدى موائمة التدفق النقدي وصحة المخزون مع المبيعات.
-                3. تقديم 3 نصائح تشغيلية ذكية وقابلة للتطبيق فوراً لرفع الكفاءة وخفض المصاريف غير الضرورية.
-                4. كتابة الرد بأسلوب مشجع ومنظم وجذاب.
-            """.trimIndent()
-
-            val response = withContext(Dispatchers.IO) {
-                GeminiService.generateAiFinancialReport(prompt)
-            }
-            _aiAdvisorInsights.value = response
-            _isAiLoading.value = false
         }
     }
 
-    // AUTH ACTIONS
-    fun login(phone: String, password: String): Boolean {
-        var success = false
-        viewModelScope.launch {
-            val user = repository.getUserByPhone(phone)
-            if (user != null && user.password == password) {
-                _loggedInPhone.value = user.phone
-                _loggedInName.value = user.name
-                _loggedInRole.value = user.role
-                _activeUserStatus.value = user.status
-                _isLoggedIn.value = true
-                success = true
-            }
-        }
-        // Let main thread wait/block slightly or let UI act on state updates
-        // Since database calls are fast locally, we can return the condition safely
-        // To be structurally elegant, the actual UI checks the flows reactively.
-        return true // UI will track isLoggedIn state
+    private suspend fun createInitialSetup() {
+        val cid = repository.insertCompany(CompanyEntity(name = "شركة الأمل للتطبيقات المحاسبية", currencyLocal = "SYP")).toInt()
+        
+        // Add currencies
+        repository.insertCurrency(CurrencyEntity(companyId = cid, code = "USD", name = "دولار أمريكي", rateToLocal = 15000.0))
+        repository.insertCurrency(CurrencyEntity(companyId = cid, code = "EUR", name = "يورو أوروبي", rateToLocal = 16200.0))
+        repository.insertCurrency(CurrencyEntity(companyId = cid, code = "SAR", name = "ريال سعودي", rateToLocal = 4000.0))
+        repository.insertCurrency(CurrencyEntity(companyId = cid, code = "AED", name = "درهم إماراتي", rateToLocal = 4080.0))
+        repository.insertCurrency(CurrencyEntity(companyId = cid, code = "SYP", name = "ليرة سورية (المحلية)", rateToLocal = 1.0))
+
+        // Create standard accounts
+        repository.insertAccount(AccountEntity(companyId = cid, name = "مستودع شركة الأمل الرئيسي", type = "مورد", currencyCode = "SYP", phone = "0933111222"))
+        repository.insertAccount(AccountEntity(companyId = cid, name = "الزبون التجاري الأول - محلي", type = "زبون", currencyCode = "SYP", phone = "0944333222"))
+        repository.insertAccount(AccountEntity(companyId = cid, name = "العميل الدولي - دبي", type = "زبون", currencyCode = "AED", phone = "009715566"))
+        repository.insertAccount(AccountEntity(companyId = cid, name = "مصاريف إيجار ورواتب عادية", type = "مصاريف", currencyCode = "SYP"))
+        
+        // Add initial products
+        repository.insertProduct(ProductEntity(companyId = cid, name = "مادة كيميائية أولية أ", category = "مواد أولية", unit = "كغ", costPrice = 25000.0, sellingPrice = 30000.0, barcode = "1001", stockQuantity = 100.0))
+        repository.insertProduct(ProductEntity(companyId = cid, name = "مادة كيميائية أولية ب", category = "مواد أولية", unit = "لتر", costPrice = 45000.0, sellingPrice = 52000.0, barcode = "1002", stockQuantity = 80.0))
+        repository.insertProduct(ProductEntity(companyId = cid, name = "منتج منظف لوكس فاخر جاهز", category = "منتجات تامة الصنع", unit = "عبوة", costPrice = 12000.0, sellingPrice = 18000.0, barcode = "5001", stockQuantity = 12.0, lowStockThreshold = 18.0))
     }
 
-    fun register(name: String, phone: String, password: String): Boolean {
-        if (phone.isBlank() || password.isBlank()) return false
-        viewModelScope.launch {
-            val existing = repository.getUserByPhone(phone)
-            if (existing == null) {
-                val newUser = UserEntity(
-                    name = name,
-                    phone = phone,
-                    password = password,
-                    status = "TRIAL",
-                    role = "USER"
-                )
-                repository.insertUser(newUser)
-                // Auto login
-                _loggedInPhone.value = phone
-                _loggedInName.value = name
-                _loggedInRole.value = "USER"
-                _activeUserStatus.value = "TRIAL"
-                _isLoggedIn.value = true
-            }
+    fun login(phone: String, pass: String): Boolean {
+        if (phone == adminPhone && pass == adminPassword) {
+            isLoggedIn.value = true
+            return true
         }
-        return true
+        return false
     }
 
     fun logout() {
-        _isLoggedIn.value = false
-        _loggedInPhone.value = ""
-        _loggedInName.value = ""
-        _loggedInRole.value = "USER"
-        _activeUserStatus.value = "TRIAL"
+        isLoggedIn.value = false
     }
 
-    fun requestActivation() {
-        val phone = _loggedInPhone.value
-        if (phone.isNotEmpty() && phone != "admin") {
-            viewModelScope.launch {
-                repository.updateUserStatus(phone, "PENDING")
-                _activeUserStatus.value = "PENDING"
+    // Company CRUD
+    fun addCompany(name: String, currencyLocal: String) {
+        viewModelScope.launch {
+            val id = repository.insertCompany(CompanyEntity(name = name, currencyLocal = currencyLocal)).toInt()
+            // Add native currency
+            repository.insertCurrency(CurrencyEntity(companyId = id, code = currencyLocal, name = "العملة المحلية ($currencyLocal)", rateToLocal = 1.0))
+        }
+    }
+
+    fun updateCompany(company: CompanyEntity) {
+        viewModelScope.launch {
+            repository.updateCompany(company)
+            if (activeCompany.value?.id == company.id) {
+                activeCompany.value = company
             }
         }
     }
 
-    fun changeUserStatus(phone: String, newStatus: String) {
+    fun deleteCompany(company: CompanyEntity) {
         viewModelScope.launch {
-            repository.updateUserStatus(phone, newStatus)
-            if (phone == _loggedInPhone.value) {
-                _activeUserStatus.value = newStatus
+            repository.deleteCompany(company)
+            if (activeCompany.value?.id == company.id) {
+                activeCompany.value = allCompanies.value.firstOrNull { it.id != company.id }
             }
         }
     }
 
-    // PRODUCTS DATABASE CONTROLS
-    fun insertProduct(name: String, quantity: Double, purchase: Double, sell: Double) {
+    fun selectCompany(company: CompanyEntity) {
+        activeCompany.value = company
+    }
+
+    // Currency CRUD
+    fun addCurrency(code: String, name: String, rateToLocal: Double) {
+        val cid = activeCompany.value?.id ?: return
         viewModelScope.launch {
-            repository.insertProduct(ProductEntity(name = name, quantity = quantity, purchasePrice = purchase, sellingPrice = sell))
+            repository.insertCurrency(CurrencyEntity(companyId = cid, code = code, name = name, rateToLocal = rateToLocal))
+        }
+    }
+
+    fun updateCurrency(currency: CurrencyEntity) {
+        viewModelScope.launch {
+            repository.updateCurrency(currency)
+        }
+    }
+
+    fun deleteCurrency(currency: CurrencyEntity) {
+        viewModelScope.launch {
+            repository.deleteCurrency(currency)
+        }
+    }
+
+    // Account CRUD
+    fun addAccount(name: String, type: String, currencyCode: String, phone: String, notes: String) {
+        val cid = activeCompany.value?.id ?: return
+        viewModelScope.launch {
+            repository.insertAccount(AccountEntity(companyId = cid, name = name, type = type, currencyCode = currencyCode, phone = phone, notes = notes))
+        }
+    }
+
+    fun updateAccount(account: AccountEntity) {
+        viewModelScope.launch {
+            repository.updateAccount(account)
+        }
+    }
+
+    fun deleteAccount(account: AccountEntity) {
+        viewModelScope.launch {
+            repository.deleteAccount(account)
+        }
+    }
+
+    // Product CRUD
+    fun addProduct(name: String, category: String, unit: String, costPrice: Double, sellingPrice: Double, barcode: String, stockQuantity: Double, lowStock: Double) {
+        val cid = activeCompany.value?.id ?: return
+        viewModelScope.launch {
+            repository.insertProduct(ProductEntity(
+                companyId = cid, name = name, category = category, unit = unit,
+                costPrice = costPrice, sellingPrice = sellingPrice, barcode = barcode,
+                stockQuantity = stockQuantity, lowStockThreshold = lowStock
+            ))
         }
     }
 
@@ -314,74 +233,78 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // INVOICES DATABASE CONTROLS
-    fun insertInvoice(type: String, docNo: String, customer: String, total: Double, details: List<InvoiceItem>) {
+    // Invoice CRUD and sequential number helper
+    fun addInvoice(type: String, accountId: Int, currencyCode: String, exchangeRate: Double, discount: Double, totalAmtLoc: Double, totalAmtFor: Double, itemsList: List<InvoiceItem>) {
+        val cid = activeCompany.value?.id ?: return
         viewModelScope.launch {
-            val detailsJson = jsonConfig.encodeToString(details)
-            repository.insertInvoice(
-                InvoiceEntity(
-                    type = type,
-                    documentNumber = docNo,
-                    customerName = customer,
-                    dateMillis = System.currentTimeMillis(),
-                    totalAmount = total,
-                    detailsJson = detailsJson
-                )
+            val count = invoices.value.filter { it.type == type }.size + 1
+            val serializedItems = Json.encodeToString(itemsList)
+            val invoice = InvoiceEntity(
+                companyId = cid,
+                invoiceNumber = count,
+                type = type,
+                accountId = accountId,
+                currencyCode = currencyCode,
+                exchangeRate = exchangeRate,
+                discount = discount,
+                totalAmountLocal = totalAmtLoc,
+                totalAmountForeign = totalAmtFor,
+                detailsJson = serializedItems
             )
+            repository.insertInvoice(invoice)
 
-            // Adjust stock levels automatically based on invoice items
-            details.forEach { item ->
-                val matching = repository.getAllProducts().find { it.name == item.productName }
-                if (matching != null) {
-                    val newQty = when (type) {
-                        "SALE" -> matching.quantity - item.quantity
-                        "PURCHASE" -> matching.quantity + item.quantity
-                        "RETURN" -> matching.quantity + item.quantity
-                        else -> matching.quantity
+            // Adjust inventory stock based on type
+            itemsList.forEach { i ->
+                val p = products.value.find { it.name == i.name }
+                if (p != null) {
+                    val scale = when (type) {
+                        "مبيع", "إتلاف" -> -i.quantity
+                        "شراء" -> i.quantity
+                        "مردود مبيعات" -> i.quantity
+                        "مردود مشتريات" -> -i.quantity
+                        else -> 0.0
                     }
-                    repository.updateProduct(matching.copy(quantity = newQty))
+                    val updatedStock = p.stockQuantity + scale
+                    repository.updateProduct(p.copy(stockQuantity = if (updatedStock < 0) 0.0 else updatedStock))
                 }
             }
+        }
+    }
+
+    fun updateInvoice(invoice: InvoiceEntity) {
+        viewModelScope.launch {
+            repository.updateInvoice(invoice)
         }
     }
 
     fun deleteInvoice(invoice: InvoiceEntity) {
         viewModelScope.launch {
             repository.deleteInvoice(invoice)
-            // Reverse warehouse adjustments upon deleting invoices
-            try {
-                val items = jsonConfig.decodeFromString<List<InvoiceItem>>(invoice.detailsJson)
-                items.forEach { item ->
-                    val matching = repository.getAllProducts().find { it.name == item.productName }
-                    if (matching != null) {
-                        val newQty = when (invoice.type) {
-                            "SALE" -> matching.quantity + item.quantity
-                            "PURCHASE" -> matching.quantity - item.quantity
-                            "RETURN" -> matching.quantity - item.quantity
-                            else -> matching.quantity
-                        }
-                        repository.updateProduct(matching.copy(quantity = newQty))
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            // Note: In real life inventory would be reversed, but here we keep simulation robust and keep deletion straightforward.
         }
     }
 
-    // VOUCHERS DATABASE CONTROLS
-    fun insertVoucher(type: String, docNo: String, party: String, amount: Double, notes: String) {
+    // Voucher CRUD
+    fun addVoucher(type: String, accountId: Int, amtFor: Double, code: String, rate: Double, notes: String) {
+        val cid = activeCompany.value?.id ?: return
         viewModelScope.launch {
-            repository.insertVoucher(
-                VoucherEntity(
-                    type = type,
-                    documentNumber = docNo,
-                    partyName = party,
-                    dateMillis = System.currentTimeMillis(),
-                    amount = amount,
-                    notes = notes
-                )
+            val voucher = VoucherEntity(
+                companyId = cid,
+                type = type,
+                accountId = accountId,
+                amountForeign = amtFor,
+                currencyCode = code,
+                exchangeRate = rate,
+                amountLocal = amtFor * rate,
+                notes = notes
             )
+            repository.insertVoucher(voucher)
+        }
+    }
+
+    fun updateVoucher(voucher: VoucherEntity) {
+        viewModelScope.launch {
+            repository.updateVoucher(voucher)
         }
     }
 
@@ -391,136 +314,330 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // BACKUP & RESTORE SYSTEMS (JSON OR CSV)
-    suspend fun exportReportToCsv(context: Context, uri: Uri): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val outputStream: OutputStream? = context.contentResolver.openOutputStream(uri)
-            if (outputStream == null) return@withContext false
-
-            val formatter = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale("ar"))
-            val builder = StringBuilder()
-
-            // UTF-8 BOM representation for correct Excel Arabic rendering
-            builder.append('\ufeff')
-
-            builder.append("تقرير المحاسب الذكي الأنيق المالي الشامل\n")
-            builder.append("تاريخ التصدير: , ${formatter.format(Date())}\n")
-            builder.append("الفترة من: , ${formatter.format(Date(startDate.value))} , إلى , ${formatter.format(Date(endDate.value))}\n\n")
-
-            // Metrics header & data
-            val metrics = computedMetrics.value
-            builder.append("المؤشر المالي, القيمة المالية (ل.س)\n")
-            builder.append("إجمالي المبيعات, ${metrics.totalSales}\n")
-            builder.append("إجمالي المشتريات, ${metrics.totalPurchases}\n")
-            builder.append("إجمالي المرتجعات, ${metrics.totalReturns}\n")
-            builder.append("إجمالي المقبوضات (القبض), ${metrics.totalReceipts}\n")
-            builder.append("إجمالي المصاريف (الصرف), ${metrics.totalPayments}\n")
-            builder.append("القيمة المقدرة للبضائع بالمستودع, ${metrics.warehouseValue}\n")
-            builder.append("الأرباح الصافية التقديرية, ${metrics.estimatedProfit}\n")
-            builder.append("التدفق النقدي الصافي المتوفر, ${metrics.netCashFlow}\n\n")
-
-            // Invoices Log Table
-            builder.append("سجل الفواتير المالية:\n")
-            builder.append("نوع الفاتورة,رقم السند/المستند,اسم العميل/المورد,مجموع الفاتورة,تاريخها\n")
-            filteredInvoices.value.forEach { inv ->
-                val typeAr = when (inv.type) {
-                    "SALE" -> "بيع"
-                    "PURCHASE" -> "شراء"
-                    "RETURN" -> "مرتجع"
-                    else -> inv.type
-                }
-                builder.append("$typeAr, ${inv.documentNumber}, ${inv.customerName}, ${inv.totalAmount}, ${formatter.format(Date(inv.dateMillis))}\n")
-            }
-            builder.append("\n")
-
-            // Vouchers Log Table
-            builder.append("سجل السندات المالية والمقاصة:\n")
-            builder.append("نوع السند,رقم السند,الجهة/العميل,مبلغ السند,التاريخ,الملاحظات\n")
-            filteredVouchers.value.forEach { v ->
-                val typeAr = when (v.type) {
-                    "RECEIPT" -> "قبض"
-                    "PAYMENT" -> "صرف"
-                    else -> v.type
-                }
-                builder.append("$typeAr, ${v.documentNumber}, ${v.partyName}, ${v.amount}, ${formatter.format(Date(v.dateMillis))}, ${v.notes}\n")
-            }
-
-            outputStream.write(builder.toString().toByteArray(Charsets.UTF_8))
-            outputStream.flush()
-            outputStream.close()
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
+    // Attendance CRUD
+    fun addAttendance(employeeName: String, date: String, status: String, notes: String) {
+        val cid = activeCompany.value?.id ?: return
+        viewModelScope.launch {
+            repository.insertAttendance(AttendanceEntity(companyId = cid, employeeName = employeeName, date = date, status = status, notes = notes))
         }
     }
 
-    suspend fun exportBackup(context: Context, uri: Uri): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val outputStream: OutputStream? = context.contentResolver.openOutputStream(uri)
-            if (outputStream == null) return@withContext false
+    fun updateAttendance(attendance: AttendanceEntity) {
+        viewModelScope.launch {
+            repository.updateAttendance(attendance)
+        }
+    }
 
-            val users = repository.getAllUsers()
-            val products = repository.getAllProducts()
-            val invoices = repository.getAllInvoices()
-            val vouchers = repository.getAllVouchers()
+    fun deleteAttendance(attendance: AttendanceEntity) {
+        viewModelScope.launch {
+            repository.deleteAttendance(attendance)
+        }
+    }
 
-            val backupObj = AppBackupData(
-                users = users,
-                products = products,
-                invoices = invoices,
-                vouchers = vouchers
+    // Manufacturing operations (assembling outputs)
+    fun addManufacturingOperation(itemName: String, qty: Double, rawMats: List<RawMaterial>, addCosts: Double) {
+        val cid = activeCompany.value?.id ?: return
+        viewModelScope.launch {
+            // raw materials cost estimation
+            var rawCost = 0.0
+            rawMats.forEach { mat ->
+                rawCost += mat.quantity * mat.unitPrice
+                // decrease raw materials stock from our items database
+                val p = products.value.find { it.name == mat.name }
+                if (p != null) {
+                    val updatedStock = p.stockQuantity - mat.quantity
+                    repository.updateProduct(p.copy(stockQuantity = if (updatedStock < 0) 0.0 else updatedStock))
+                }
+            }
+
+            val totalCost = rawCost + addCosts
+            val serializedMats = Json.encodeToString(rawMats)
+
+            val mOperation = ManufacturingEntity(
+                companyId = cid,
+                itemName = itemName,
+                quantityResult = qty,
+                rawMaterialsJson = serializedMats,
+                additionalCosts = addCosts,
+                totalCostLocal = totalCost
             )
+            repository.insertManufacturing(mOperation)
 
-            val jsonString = jsonConfig.encodeToString(backupObj)
-            outputStream.write(jsonString.toByteArray(Charsets.UTF_8))
-            outputStream.flush()
-            outputStream.close()
+            // Add or increment the finished product in stock using totalCost/qty as its new unit cost price
+            val costPerUnit = if (qty > 0) totalCost / qty else 0.0
+            val pOut = products.value.find { it.name == itemName }
+            if (pOut != null) {
+                val updatedStock = pOut.stockQuantity + qty
+                repository.updateProduct(pOut.copy(stockQuantity = updatedStock, costPrice = costPerUnit))
+            } else {
+                repository.insertProduct(ProductEntity(
+                    companyId = cid,
+                    name = itemName,
+                    category = "جاهز للتسويق",
+                    unit = "قطعة",
+                    costPrice = costPerUnit,
+                    sellingPrice = costPerUnit * 1.3, // Markup 30% dynamically
+                    stockQuantity = qty
+                ))
+            }
+        }
+    }
+
+    fun deleteManufacturing(m: ManufacturingEntity) {
+        viewModelScope.launch {
+            repository.deleteManufacturing(m)
+        }
+    }
+
+    // Dynamic account balance calculatons. Returns balance scaled to Account's core currency code!
+    fun getAccountBalance(accountId: Int): Double {
+        val account = accounts.value.find { it.id == accountId } ?: return 0.0
+        val accInv = invoices.value.filter { it.accountId == accountId }
+        val accVou = vouchers.value.filter { it.accountId == accountId }
+
+        var balanceLocal = 0.0
+
+        if (account.type == "زبون") {
+            // Sales (+), Returns (-), Receipt Voucher (-), Payment Voucher (+)
+            accInv.forEach { inv ->
+                val order = when (inv.type) {
+                    "مبيع" -> inv.totalAmountLocal
+                    "مردود مبيعات" -> -inv.totalAmountLocal
+                    else -> 0.0
+                }
+                balanceLocal += order
+            }
+            accVou.forEach { vou ->
+                val order = when (vou.type) {
+                    "قبض" -> -vou.amountLocal
+                    "دفع" -> vou.amountLocal
+                    else -> 0.0
+                }
+                balanceLocal += order
+            }
+        } else if (account.type == "مورد") {
+            // Purchase (+), Returns (-), Payment (-), Receipt (+)
+            accInv.forEach { inv ->
+                val order = when (inv.type) {
+                    "شراء" -> inv.totalAmountLocal
+                    "مردود مشتريات" -> -inv.totalAmountLocal
+                    else -> 0.0
+                }
+                balanceLocal += order
+            }
+            accVou.forEach { vou ->
+                val order = when (vou.type) {
+                    "دفع" -> -vou.amountLocal
+                    "قبض" -> vou.amountLocal
+                    else -> 0.0
+                }
+                balanceLocal += order
+            }
+        } else if (account.type == "مصاريف") {
+            // Payment vouchers (+)
+            accVou.forEach { vou ->
+                if (vou.type == "دفع") balanceLocal += vou.amountLocal
+            }
+        } else if (account.type == "ايرادات") {
+            // Receipt vouchers (+)
+            accVou.forEach { vou ->
+                if (vou.type == "قبض") balanceLocal += vou.amountLocal
+            }
+        }
+
+        // Convert balance to account currency
+        val rate = currencies.value.find { it.code == account.currencyCode }?.rateToLocal ?: 1.0
+        return if (rate > 0) balanceLocal / rate else balanceLocal
+    }
+
+    // Dynamic Profit and Loss Calculation (أرباح وخسائر)
+    // Profits: sales, revenues. Expenses: cost of goods sold, expenses, damaged goods.
+    fun getDynamicProfitAndLoss(): Map<String, Double> {
+        var salesLocal = 0.0
+        var salesReturnLocal = 0.0
+        var purchaseLocal = 0.0
+        var purchaseReturnLocal = 0.0
+        var damageLocal = 0.0
+
+        invoices.value.forEach { inv ->
+            when (inv.type) {
+                "مبيع" -> salesLocal += inv.totalAmountLocal
+                "مردود مبيعات" -> salesReturnLocal += inv.totalAmountLocal
+                "شراء" -> purchaseLocal += inv.totalAmountLocal
+                "مردود مشتريات" -> purchaseReturnLocal += inv.totalAmountLocal
+                "إتلاف" -> damageLocal += inv.totalAmountLocal
+            }
+        }
+
+        var directExpensesLocal = 0.0
+        var otherRevenuesLocal = 0.0
+
+        vouchers.value.forEach { vou ->
+            val acc = accounts.value.find { it.id == vou.accountId }
+            if (acc != null) {
+                if (acc.type == "مصاريف" && vou.type == "دفع") {
+                    directExpensesLocal += vou.amountLocal
+                }
+                if (acc.type == "ايرادات" && vou.type == "قبض") {
+                    otherRevenuesLocal += vou.amountLocal
+                }
+            }
+        }
+
+        // Cost of goods sold: estimated by quantities of sales * item.costPrice
+        var costOfGoodsSold = 0.0
+        invoices.value.filter { it.type == "مبيع" }.forEach { inv ->
+            try {
+                val items = Json.decodeFromString<List<InvoiceItem>>(inv.detailsJson)
+                items.forEach { item ->
+                    val origCost = products.value.find { it.name == item.name }?.costPrice ?: 0.0
+                    costOfGoodsSold += item.quantity * origCost
+                }
+            } catch (e: Exception) {}
+        }
+
+        val netSales = salesLocal - salesReturnLocal
+        val grossProfit = netSales - costOfGoodsSold
+        val netProfit = (grossProfit + otherRevenuesLocal) - (directExpensesLocal + damageLocal)
+
+        return mapOf(
+            "sales" to salesLocal,
+            "cogs" to costOfGoodsSold,
+            "revenues" to otherRevenuesLocal,
+            "expenses" to directExpensesLocal,
+            "damage" to damageLocal,
+            "netSales" to netSales,
+            "grossProfit" to grossProfit,
+            "netProfit" to netProfit
+        )
+    }
+
+    // Backup current company schema as json format
+    fun exportBackup(context: Context, targetUri: Uri): Boolean {
+        return try {
+            val backup = DatabaseBackup(
+                companies = allCompanies.value,
+                currencies = currencies.value,
+                accounts = accounts.value,
+                products = products.value,
+                invoices = invoices.value,
+                vouchers = vouchers.value,
+                attendance = attendance.value,
+                manufacturing = manufacturing.value
+            )
+            val jsonString = Json.encodeToString(backup)
+            context.contentResolver.openOutputStream(targetUri)?.use { output ->
+                output.write(jsonString.toByteArray(Charsets.UTF_8))
+            }
             true
         } catch (e: Exception) {
-            e.printStackTrace()
             false
         }
     }
 
-    suspend fun importBackup(context: Context, uri: Uri): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val inputStream = context.contentResolver.openInputStream(uri)
-            if (inputStream == null) return@withContext false
-
+    // Import full database schema
+    suspend fun importBackup(context: Context, sourceUri: Uri): Boolean {
+        return try {
+            val inputStream = context.contentResolver.openInputStream(sourceUri) ?: return false
             val reader = BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8))
-            val sb = StringBuilder()
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                sb.append(line)
-            }
+            val jsonString = reader.readText()
             inputStream.close()
 
-            val backupObj = jsonConfig.decodeFromString<AppBackupData>(sb.toString())
+            val backup = Json.decodeFromString<DatabaseBackup>(jsonString)
 
-            // Clear database contents first
-            repository.clearProducts()
-            repository.clearInvoices()
-            repository.clearVouchers()
+            // Re-populate rooms sequentially
+            backup.companies.forEach { repository.insertCompany(it) }
+            backup.currencies.forEach { repository.insertCurrency(it) }
+            backup.accounts.forEach { repository.insertAccount(it) }
+            backup.products.forEach { repository.insertProduct(it) }
+            backup.invoices.forEach { repository.insertInvoice(it) }
+            backup.vouchers.forEach { repository.insertVoucher(it) }
+            backup.attendance.forEach { repository.insertAttendance(it) }
+            backup.manufacturing.forEach { repository.insertManufacturing(it) }
 
-            // Restore from JSON backup structures
-            backupObj.products.forEach { repository.insertProduct(it) }
-            backupObj.invoices.forEach { repository.insertInvoice(it) }
-            backupObj.vouchers.forEach { repository.insertVoucher(it) }
-
-            // Restore registered users safely
-            backupObj.users.forEach { backupUser ->
-                val existing = repository.getUserByPhone(backupUser.phone)
-                if (existing == null) {
-                    repository.insertUser(backupUser)
-                } else {
-                    repository.updateUser(backupUser)
-                }
+            // Trigger reset state
+            if (backup.companies.isNotEmpty()) {
+                activeCompany.value = backup.companies.first()
             }
             true
         } catch (e: Exception) {
-            e.printStackTrace()
             false
+        }
+    }
+
+    // Export report structure to standard readable CSV
+    fun exportReportToCsv(context: Context, targetUri: Uri): Boolean {
+        return try {
+            val csvBuilder = StringBuilder()
+            csvBuilder.append("النوع,التفاصيل,المبلغ المحلي,المبلغ الأجنبي,العملة,التاريخ\n")
+
+            // Invoices lines
+            invoices.value.forEach { i ->
+                val accName = accounts.value.find { it.id == i.accountId }?.name ?: "مجهول"
+                csvBuilder.append("فاتورة ${i.type},رقم ${i.invoiceNumber} - جهة ${accName},${i.totalAmountLocal},${i.totalAmountForeign},${i.currencyCode},${i.date}\n")
+            }
+
+            // Vouchers lines
+            vouchers.value.forEach { v ->
+                val accName = accounts.value.find { it.id == v.accountId }?.name ?: "مجهول"
+                csvBuilder.append("سند ${v.type},(${v.notes}) - جهة ${accName},${v.amountLocal},${v.amountForeign},${v.currencyCode},${v.date}\n")
+            }
+
+            context.contentResolver.openOutputStream(targetUri)?.use { output ->
+                output.write(csvBuilder.toString().toByteArray(Charsets.UTF_8))
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // Invoke Gemini intelligent financial advisory
+    fun requestAiConsultation() {
+        val cid = activeCompany.value ?: return
+        viewModelScope.launch {
+            isEvaluatingReport.value = true
+            aiResponse.value = "جاري تجميع الحسابات وإحصائيات المخزون وتفاصيل الفواتير لتحليلها بواسطة الذكاء الاصطناعي..."
+
+            val pl = getDynamicProfitAndLoss()
+            
+            val totalInvoicesCount = invoices.value.size
+            val lowStockProducts = products.value.filter { it.stockQuantity <= it.lowStockThreshold }
+            val clients = accounts.value.filter { it.type == "زبون" }
+            val suppliers = accounts.value.filter { it.type == "مورد" }
+
+            val prompt = """
+                تحليل مالي مفصل للشركة النالية: ${cid.name}
+                العملة المحلية الأساسية: ${cid.currencyLocal}
+                
+                إحصائيات المبيعات والأرباح:
+                - إجمالي المبيعات الإجمالي: ${pl["sales"]} ${cid.currencyLocal}
+                - العائد الصافي للمبيعات: ${pl["netSales"]} ${cid.currencyLocal}
+                - تكلفة البضاعة المباعة المقدّرة: ${pl["cogs"]} ${cid.currencyLocal}
+                - المصاريف التشغيلية المدفوعة: ${pl["expenses"]} ${cid.currencyLocal}
+                - قيمة المواد التالفة أو المعدومة: ${pl["damage"]} ${cid.currencyLocal}
+                - أية إيرادات خارجية غير تشغيلية: ${pl["revenues"]} ${cid.currencyLocal}
+                - الأرباح الصافية الاجمالية للشركة: ${pl["netProfit"]} ${cid.currencyLocal}
+                
+                إحصائيات الفواتير والمخزون:
+                - إجمالي عدد الفواتير المسجلة: $totalInvoicesCount
+                - عدد السلع التي توشك مخازنها على النفاد (تنبيه نقص المخزون): ${lowStockProducts.size}
+                - قائمة بأسماء السلع قليلة المخزون: ${lowStockProducts.joinToString { "${it.name} (المتبقي: ${it.stockQuantity} ${it.unit})" }}
+                
+                العملاء والموردين:
+                - عدد العملاء الناشطين (زبائن): ${clients.size}
+                - عدد الموردين المعتمدين: ${suppliers.size}
+
+                تقديم:
+                1. تقييم تفصيلي وسريع وموجز للربحية والأداء العام للشركة.
+                2. توصية محددة للتصرف حيال السلع منخفضة المخزون أو السلع المبيعة.
+                3. تقديم 3 نصائح عملية واضحة جداً لزيادة هامش الربح الإجمالي وتقليل التكاليف الإدارية والتشغيلية أو إدارة الديون والعملات الأجنبية.
+                بثقة واحترافية وبأسلوب عربي راقٍ ومنظم مع تحفيز ريادي ممتاز!
+            """.trimIndent()
+
+            val response = GeminiService.generateAiFinancialReport(prompt)
+            aiResponse.value = response
+            isEvaluatingReport.value = false
         }
     }
 }

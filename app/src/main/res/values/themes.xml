@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources xmlns:tools="http://schemas.android.com/tools">
+<resources>
     <style name="Theme.SmartAccountant" parent="android:Theme.DeviceDefault.NoActionBar">
-        <!-- System properties -->
-        <item name="android:statusBarColor">?android:attr/colorBackground</item>
-        <item name="android:windowLightStatusBar">true</item>
+         <item name="android:statusBarColor">?android:attr/colorBackground</item>
+         <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

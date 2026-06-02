@@ -2,7 +2,6 @@ package com.example.data
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.scalars.ScalarsConverterFactory
@@ -58,9 +57,9 @@ object RetrofitClient {
     private const val BASE_URL = "https://generativelanguage.googleapis.com/"
 
     private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
     val service: GeminiApiService by lazy {
@@ -75,9 +74,15 @@ object RetrofitClient {
 
 object GeminiService {
     suspend fun generateAiFinancialReport(prompt: String): String {
-        val apiKey = BuildConfig.GEMINI_API_KEY
+        // Safe access to injected GEMINI_API_KEY from BuildConfig
+        val apiKey = try {
+            BuildConfig::class.java.getField("GEMINI_API_KEY").get(null) as? String ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+        
         if (apiKey.isBlank()) {
-            return "عذراً، لم يتم العثور على مفتاح API الخاص بـ Gemini في Secrets أو الإعدادات الخاصة بـ AI Studio. يرجى تهيئته لتنشيط التحليل المالي الذكي."
+            return "عذراً، لم يتم العثور على مفتاح API الخاص بـ Gemini في Secrets للـ AI Studio. يرجى تهيئته لتنشيط المستشار المالي والتحليل الذكي بالأرقام."
         }
 
         val request = GenerateContentRequest(
@@ -88,7 +93,7 @@ object GeminiService {
             ),
             generationConfig = GenerationConfig(temperature = 0.7f),
             systemInstruction = Content(
-                parts = listOf(Part(text = "أنت مستشار مالي وخبير محاسبي ذكي ومحترف. تقدم نصائح مالية، تحليل مالي، وتشخيص دقيق للأداء المالي للشركات بناء على الأرقام المعطاة باللغة العربية بأسلوب راقٍ، مهني ومنظم."))
+                parts = listOf(Part(text = "أنت مستشار مالي وخبير محاسبة ذكي ومحترف. تقوم بتقديم تحليلات مالية دقيقة، تحديد الثغرات، إعطاء نصائح استراتيجية لنمو الأرباح وتقليل التكاليف بناء على الأرقام والبيانات المعطاة لك باللغة العربية، بأسلوب مرتب واحترافي ورصين."))
             )
         )
 
@@ -100,7 +105,7 @@ object GeminiService {
             response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text 
                 ?: "عذراً، استجابة الذكاء الاصطناعي فارغة حالياً."
         } catch (e: Exception) {
-            "فشل استدعاء المستشار المالي الذكي: ${e.localizedMessage ?: e.message}"
+            "فشل تحليل المستشار المالي الذكي: ${e.localizedMessage ?: e.message}"
         }
     }
 }

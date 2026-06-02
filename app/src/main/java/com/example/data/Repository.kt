@@ -2,81 +2,71 @@ package com.example.data
 
 import kotlinx.coroutines.flow.Flow
 
-class Repository(private val database: AppDatabase) {
+class Repository(private val db: AppDatabase) {
 
-    private val userDao = database.userDao()
-    private val productDao = database.productDao()
-    private val invoiceDao = database.invoiceDao()
-    private val voucherDao = database.voucherDao()
+    // DAOs
+    val companyDao = db.companyDao()
+    val currencyDao = db.currencyDao()
+    val accountDao = db.accountDao()
+    val productDao = db.productDao()
+    val invoiceDao = db.invoiceDao()
+    val voucherDao = db.voucherDao()
+    val attendanceDao = db.attendanceDao()
+    val manufacturingDao = db.manufacturingDao()
 
-    // Flow getters for reactive updates
-    val allUsersFlow: Flow<List<UserEntity>> = userDao.getAllUsersFlow()
-    val allProductsFlow: Flow<List<ProductEntity>> = productDao.getAllProductsFlow()
-    val allInvoicesFlow: Flow<List<InvoiceEntity>> = invoiceDao.getAllInvoicesFlow()
-    val allVouchersFlow: Flow<List<VoucherEntity>> = voucherDao.getAllVouchersFlow()
+    // Companies
+    val allCompaniesFlow: Flow<List<CompanyEntity>> = companyDao.getAllCompaniesFlow()
+    suspend fun getCompanyById(id: Int) = companyDao.getCompanyById(id)
+    suspend fun insertCompany(company: CompanyEntity) = companyDao.insertCompany(company)
+    suspend fun updateCompany(company: CompanyEntity) = companyDao.updateCompany(company)
+    suspend fun deleteCompany(company: CompanyEntity) = companyDao.deleteCompany(company)
 
-    // Users Actions
-    suspend fun getAllUsers(): List<UserEntity> = userDao.getAllUsers()
-    suspend fun getUserByPhone(phone: String): UserEntity? = userDao.getUserByPhone(phone)
-    suspend fun insertUser(user: UserEntity): Boolean {
-        val result = userDao.insertUser(user)
-        return result != -1L
-    }
-    suspend fun updateUser(user: UserEntity) = userDao.updateUser(user)
-    suspend fun updateUserStatus(phone: String, status: String) = userDao.updateUserStatus(phone, status)
-    suspend fun deleteUser(phone: String) = userDao.deleteUserByPhone(phone)
+    // Currencies
+    fun getCurrenciesForCompanyFlow(companyId: Int) = currencyDao.getCurrenciesForCompanyFlow(companyId)
+    suspend fun getCurrenciesForCompany(companyId: Int) = currencyDao.getCurrenciesForCompany(companyId)
+    suspend fun insertCurrency(currency: CurrencyEntity) = currencyDao.insertCurrency(currency)
+    suspend fun updateCurrency(currency: CurrencyEntity) = currencyDao.updateCurrency(currency)
+    suspend fun deleteCurrency(currency: CurrencyEntity) = currencyDao.deleteCurrency(currency)
 
-    // Products Actions
-    suspend fun getAllProducts(): List<ProductEntity> = productDao.getAllProducts()
-    suspend fun insertProduct(product: ProductEntity): Boolean {
-        return productDao.insertProduct(product) != -1L
-    }
+    // Accounts
+    fun getAccountsForCompanyFlow(companyId: Int) = accountDao.getAccountsForCompanyFlow(companyId)
+    suspend fun getAccountsForCompany(companyId: Int) = accountDao.getAccountsForCompany(companyId)
+    suspend fun insertAccount(account: AccountEntity) = accountDao.insertAccount(account)
+    suspend fun updateAccount(account: AccountEntity) = accountDao.updateAccount(account)
+    suspend fun deleteAccount(account: AccountEntity) = accountDao.deleteAccount(account)
+
+    // Products
+    fun getProductsForCompanyFlow(companyId: Int) = productDao.getProductsForCompanyFlow(companyId)
+    suspend fun getProductsForCompany(companyId: Int) = productDao.getProductsForCompany(companyId)
+    suspend fun insertProduct(product: ProductEntity) = productDao.insertProduct(product)
     suspend fun updateProduct(product: ProductEntity) = productDao.updateProduct(product)
     suspend fun deleteProduct(product: ProductEntity) = productDao.deleteProduct(product)
-    suspend fun clearProducts() = productDao.clearAllProducts()
 
-    // Invoices Actions
-    suspend fun getAllInvoices(): List<InvoiceEntity> = invoiceDao.getAllInvoices()
-    suspend fun insertInvoice(invoice: InvoiceEntity): Boolean {
-        return invoiceDao.insertInvoice(invoice) != -1L
-    }
+    // Invoices
+    fun getInvoicesForCompanyFlow(companyId: Int) = invoiceDao.getInvoicesForCompanyFlow(companyId)
+    suspend fun getInvoicesForCompany(companyId: Int) = invoiceDao.getInvoicesForCompany(companyId)
+    suspend fun insertInvoice(invoice: InvoiceEntity) = invoiceDao.insertInvoice(invoice)
+    suspend fun updateInvoice(invoice: InvoiceEntity) = invoiceDao.updateInvoice(invoice)
     suspend fun deleteInvoice(invoice: InvoiceEntity) = invoiceDao.deleteInvoice(invoice)
-    suspend fun clearInvoices() = invoiceDao.clearAllInvoices()
 
-    // Vouchers Actions
-    suspend fun getAllVouchers(): List<VoucherEntity> = voucherDao.getAllVouchers()
-    suspend fun insertVoucher(voucher: VoucherEntity): Boolean {
-        return voucherDao.insertVoucher(voucher) != -1L
-    }
+    // Vouchers
+    fun getVouchersForCompanyFlow(companyId: Int) = voucherDao.getVouchersForCompanyFlow(companyId)
+    suspend fun getVouchersForCompany(companyId: Int) = voucherDao.getVouchersForCompany(companyId)
+    suspend fun insertVoucher(voucher: VoucherEntity) = voucherDao.insertVoucher(voucher)
+    suspend fun updateVoucher(voucher: VoucherEntity) = voucherDao.updateVoucher(voucher)
     suspend fun deleteVoucher(voucher: VoucherEntity) = voucherDao.deleteVoucher(voucher)
-    suspend fun clearVouchers() = voucherDao.clearAllVouchers()
 
-    // Seed database with default admin & demo users for fast testing & evaluation
-    suspend fun seedDatabase() {
-        val existingAdmin = userDao.getUserByPhone("admin")
-        if (existingAdmin == null) {
-            userDao.insertUser(
-                UserEntity(
-                    name = "المدير العام",
-                    phone = "admin",
-                    password = "admin",
-                    status = "ACTIVE",
-                    role = "ADMIN"
-                )
-            )
-        }
+    // Attendance
+    fun getAttendanceForCompanyFlow(companyId: Int) = attendanceDao.getAttendanceForCompanyFlow(companyId)
+    suspend fun getAttendanceForCompany(companyId: Int) = attendanceDao.getAttendanceForCompany(companyId)
+    suspend fun insertAttendance(attendance: AttendanceEntity) = attendanceDao.insertAttendance(attendance)
+    suspend fun updateAttendance(attendance: AttendanceEntity) = attendanceDao.updateAttendance(attendance)
+    suspend fun deleteAttendance(attendance: AttendanceEntity) = attendanceDao.deleteAttendance(attendance)
 
-        val existingUser = userDao.getUserByPhone("0938385157")
-        if (existingUser == null) {
-            userDao.insertUser(
-                UserEntity(
-                    name = "موزع تجريبي",
-                    phone = "0938385157",
-                    password = "123456",
-                    status = "TRIAL",
-                    role = "USER"
-                )
-            )
-        }
-    }
+    // Manufacturing
+    fun getManufacturingForCompanyFlow(companyId: Int) = manufacturingDao.getManufacturingForCompanyFlow(companyId)
+    suspend fun getManufacturingForCompany(companyId: Int) = manufacturingDao.getManufacturingForCompany(companyId)
+    suspend fun insertManufacturing(manufacturing: ManufacturingEntity) = manufacturingDao.insertManufacturing(manufacturing)
+    suspend fun updateManufacturing(manufacturing: ManufacturingEntity) = manufacturingDao.updateManufacturing(manufacturing)
+    suspend fun deleteManufacturing(manufacturing: ManufacturingEntity) = manufacturingDao.deleteManufacturing(manufacturing)
 }
