@@ -1810,6 +1810,159 @@ fun AccountsScreen(
 // ---------------------------------------------------------
 // 5. INVENTORY & BARCODE TAB
 // ---------------------------------------------------------
+private fun startBarcodeScanner(
+    context: android.content.Context,
+    onSuccess: (String) -> Unit,
+    onFallback: () -> Unit
+) {
+    try {
+        val scanner = com.google.mlkit.vision.codescanner.GmsBarcodeScanning.getClient(context)
+        scanner.startScan()
+            .addOnSuccessListener { barcode ->
+                val code = barcode.rawValue ?: barcode.displayValue ?: ""
+                if (code.isNotBlank()) {
+                    onSuccess(code)
+                } else {
+                    android.widget.Toast.makeText(context, "لم يتم قراءه أي باركود", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+            .addOnFailureListener { e ->
+                onFallback()
+            }
+            .addOnCanceledListener {
+                android.widget.Toast.makeText(context, "تم إلغاء عملية الفحص", android.widget.Toast.LENGTH_SHORT).show()
+            }
+    } catch (e: Exception) {
+        onFallback()
+    }
+}
+
+private fun printBarcode(
+    context: android.content.Context,
+    companyName: String,
+    product: ProductEntity
+) {
+    val barcodeText = product.barcode.ifBlank { "00000000" }
+    val barcodeBarsSvg = StringBuilder()
+    var currentX = 15f
+    
+    // Start guard bars
+    barcodeBarsSvg.append("<rect x=\"$currentX\" y=\"5\" width=\"2\" height=\"65\" fill=\"black\"/>")
+    currentX += 2
+    barcodeBarsSvg.append("<rect x=\"$currentX\" y=\"5\" width=\"2\" height=\"65\" fill=\"white\"/>")
+    currentX += 2
+    barcodeBarsSvg.append("<rect x=\"$currentX\" y=\"5\" width=\"2\" height=\"65\" fill=\"black\"/>")
+    currentX += 2
+    
+    // Generate bars based on characters
+    for (char in barcodeText) {
+        val hash = char.hashCode()
+        for (b in 0..3) {
+            val isBlack = b % 2 == 0
+            val barWeight = ((hash shr b) and 1) + 1
+            val width = barWeight * 2f
+            val fillColor = if (isBlack) "black" else "white"
+            barcodeBarsSvg.append("<rect x=\"$currentX\" y=\"5\" width=\"$width\" height=\"60\" fill=\"$fillColor\"/>")
+            currentX += width
+        }
+    }
+    
+    // Stop guard bars
+    barcodeBarsSvg.append("<rect x=\"$currentX\" y=\"5\" width=\"2\" height=\"65\" fill=\"black\"/>")
+    currentX += 2
+    barcodeBarsSvg.append("<rect x=\"$currentX\" y=\"5\" width=\"2\" height=\"65\" fill=\"white\"/>")
+    currentX += 2
+    barcodeBarsSvg.append("<rect x=\"$currentX\" y=\"5\" width=\"2\" height=\"65\" fill=\"black\"/>")
+    currentX += 2
+    
+    val totalWidth = currentX + 15
+    val svgText = """
+        <svg width="100%" height="90" viewBox="0 0 $totalWidth 75" xmlns="http://www.w3.org/2000/svg">
+            <rect width="100%" height="100%" fill="white"/>
+            $barcodeBarsSvg
+        </svg>
+    """.trimIndent()
+
+    val html = """
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body {
+                    font-family: sans-serif;
+                    direction: rtl;
+                    text-align: center;
+                    padding: 0;
+                    margin: 0;
+                    background-color: white;
+                }
+                .label-box {
+                    border: 1.5px solid #000000;
+                    padding: 10px;
+                    width: 280px;
+                    margin: 15px auto;
+                    box-sizing: border-box;
+                    background-color: white;
+                    border-radius: 4px;
+                }
+                .company {
+                    font-size: 11px;
+                    font-weight: bold;
+                    color: #555;
+                    margin-bottom: 2px;
+                }
+                .title {
+                    font-size: 16px;
+                    font-weight: bold;
+                    color: #000;
+                    margin: 4px 0;
+                }
+                .price-tag {
+                    color: black;
+                    font-size: 14px;
+                    font-weight: bold;
+                    margin: 4px 0;
+                    border: 1px solid black;
+                    padding: 3px 6px;
+                    display: inline-block;
+                }
+                .barcode-area {
+                    margin: 10px 0;
+                }
+                .barcode-num {
+                    font-family: monospace;
+                    font-size: 12px;
+                    letter-spacing: 2px;
+                    font-weight: bold;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="label-box">
+                <div class="company">$companyName</div>
+                <div class="title">${product.name}</div>
+                <div class="price-tag">السعر: ${product.sellingPrice} ${product.priceCurrency}</div>
+                <div class="barcode-area">
+                    $svgText
+                </div>
+                <div class="barcode-num">${product.barcode}</div>
+            </div>
+        </body>
+        </html>
+    """.trimIndent()
+
+    val webView = android.webkit.WebView(context)
+    webView.webViewClient = object : android.webkit.WebViewClient() {
+        override fun onPageFinished(view: android.webkit.WebView, url: String) {
+            val printManager = context.getSystemService(android.content.Context.PRINT_SERVICE) as? android.print.PrintManager
+            val jobName = "ملصق باركود - ${product.name}"
+            val printAdapter = view.createPrintDocumentAdapter(jobName)
+            printManager?.print(jobName, printAdapter, android.print.PrintAttributes.Builder().build())
+        }
+    }
+    webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+}
+
 @Composable
 fun StockScreen(
     activeCompany: CompanyEntity?,
@@ -1890,7 +2043,24 @@ fun StockScreen(
             }
 
             Button(
-                onClick = { showBarcodeScannerDialog = true },
+                onClick = {
+                    startBarcodeScanner(
+                        context = context,
+                        onSuccess = { code ->
+                            searchQuery = code
+                            val matched = products.find { it.barcode == code }
+                            if (matched != null) {
+                                android.widget.Toast.makeText(context, "تم العثور على المادة وتوجيهك إليها: ${matched.name}", android.widget.Toast.LENGTH_LONG).show()
+                                editingProduct = matched
+                            } else {
+                                android.widget.Toast.makeText(context, "الرمز المفحوص: $code. لم يتم العثور على مادة مطابقة.", android.widget.Toast.LENGTH_LONG).show()
+                            }
+                        },
+                        onFallback = {
+                            showBarcodeScannerDialog = true
+                        }
+                    )
+                },
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(8.dp)
@@ -2457,7 +2627,25 @@ fun StockScreen(
                             value = barcode, 
                             onValueChange = { barcode = it }, 
                             label = { Text("الباركود الخاص بالمادة") }, 
-                            modifier = Modifier.weight(1.3f)
+                            modifier = Modifier.weight(1.3f),
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = {
+                                        startBarcodeScanner(
+                                            context = context,
+                                            onSuccess = { code -> 
+                                                barcode = code 
+                                                android.widget.Toast.makeText(context, "تم قراءة الباركود: $code", android.widget.Toast.LENGTH_SHORT).show()
+                                            },
+                                            onFallback = {
+                                                android.widget.Toast.makeText(context, "لم يتوفر الماسح التلقائي، الرجاء إدخال الباركود يدوياً أو توليده تلقائياً", android.widget.Toast.LENGTH_LONG).show()
+                                            }
+                                        )
+                                    }
+                                ) {
+                                    Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan barcode")
+                                }
+                            }
                         )
                         Button(
                             onClick = {
@@ -2699,7 +2887,25 @@ fun StockScreen(
                             value = barcode, 
                             onValueChange = { barcode = it }, 
                             label = { Text("كود باركود الصنف") }, 
-                            modifier = Modifier.weight(1.3f)
+                            modifier = Modifier.weight(1.3f),
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = {
+                                        startBarcodeScanner(
+                                            context = context,
+                                            onSuccess = { code -> 
+                                                barcode = code 
+                                                android.widget.Toast.makeText(context, "تم قراءة الباركود: $code", android.widget.Toast.LENGTH_SHORT).show()
+                                            },
+                                            onFallback = {
+                                                android.widget.Toast.makeText(context, "لم يتوفر الماسح التلقائي، الرجاء إدخال الباركود يدوياً أو توليده تلقائياً", android.widget.Toast.LENGTH_LONG).show()
+                                            }
+                                        )
+                                    }
+                                ) {
+                                    Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan barcode")
+                                }
+                            }
                         )
                         Button(
                             onClick = {
@@ -2823,7 +3029,11 @@ fun StockScreen(
                         }
                         Button(
                             onClick = {
-                                // Simulate sending barcode parameters to thermal printer
+                                printBarcode(
+                                    context = context,
+                                    companyName = activeCompany?.name ?: "الشركة",
+                                    product = prod
+                                )
                                 selectedProductForBarcode = null
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
